@@ -225,9 +225,11 @@
     try { localStorage.setItem(ADR_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch(e) {}
   }
 
-  // ── Fetch quotes in two batches to stay under rate limit ──
-  async function fetchQuotes(symbols) {
-    const res  = await fetch(`https://api.twelvedata.com/quote?symbol=${symbols}&apikey=${API_KEY}`);
+  function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // ── Fetch a single pair's quote ──
+  async function fetchSingleQuote(symbol) {
+    const res  = await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbol)}&apikey=${API_KEY}`);
     const data = await res.json();
     return data;
   }
@@ -238,23 +240,22 @@
     return data;
   }
 
-  function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-  // ── Apply quote data to pairData ──
-  function applyQuotes(qData) {
-    PAIRS.forEach(p => {
-      const q = Array.isArray(qData) ? null : qData[p.api] || (Object.keys(qData).length && qData.price ? qData : null);
-      if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
-      const d = pairData[p.symbol];
-      if (q && q.price && !q.code) {
-        d.price     = q.price;
-        d.change    = q.change;
-        d.changePct = q.percent_change;
-        d.high      = q.high;
-        d.low       = q.low;
-        d.close     = q.previous_close;
-      }
-    });
+  // ── Apply a single quote response ──
+  function applySingleQuote(symbol, q) {
+    if (!pairData[symbol]) pairData[symbol] = { symbol };
+    const d = pairData[symbol];
+    if (q && q.price && !q.code) {
+      d.price     = q.price;
+      d.change    = q.change;
+      d.changePct = q.percent_change;
+      d.high      = q.high;
+      d.low       = q.low;
+      d.close     = q.previous_close;
+      return true;
+    }
+    // Log error for debugging
+    if (q && q.message) console.warn(symbol, q.message);
+    return false;
   }
 
   // ── Apply ADR from time series ──
@@ -298,69 +299,68 @@
     });
   }
 
-  // ── Main fetch ──
+  // ── Main fetch — one pair at a time, 8s gap = 7.5/min (under limit) ──
   async function fetchAll() {
-    const batchA = PAIRS.slice(0, 5).map(p => p.api).join(',');
-    const batchB = PAIRS.slice(5).map(p => p.api).join(',');
+    const statusEl = document.getElementById('last-updated');
 
-    try {
-      // Step 1: fetch quotes for both batches (staggered 8s)
-      const [qA, qB] = await Promise.all([
-        fetchQuotes(batchA),
-        delay(8000).then(() => fetchQuotes(batchB))
-      ]);
-      applyQuotes(qA);
-      applyQuotes(qB);
+    // Apply cached ADR immediately
+    const adrCache = loadADRCache();
+    if (adrCache) applyADR(null, adrCache);
 
-      // Step 2: apply cached ADR if available, then render immediately
-      const adrCache = loadADRCache();
-      if (adrCache) {
-        applyADR(null, adrCache);
+    // Fetch each pair individually with gap to stay under rate limit
+    let loaded = 0;
+    for (let i = 0; i < PAIRS.length; i++) {
+      const p = PAIRS[i];
+      try {
+        statusEl.textContent = `Fetching ${p.symbol}... (${i+1}/${PAIRS.length})`;
+        const q = await fetchSingleQuote(p.api);
+        const ok = applySingleQuote(p.symbol, q);
+        if (ok) {
+          loaded++;
+          recalcAll();
+          renderCards();
+        } else {
+          // Mark as unavailable
+          if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
+          pairData[p.symbol].unavailable = true;
+        }
+      } catch(e) {
+        console.warn('Fetch error for', p.symbol, e);
       }
-      recalcAll();
-      const now = new Date();
-      document.getElementById('last-updated').textContent =
-        'Last updated: ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) +
-        (adrCache ? '' : ' — ADR loading...');
-      renderCards();
-
-      // Step 3: if no ADR cache, fetch in background without blocking
-      if (!adrCache) {
-        fetchADRInBackground(batchA, batchB);
-      }
-
-    } catch(err) {
-      document.getElementById('last-updated').textContent = 'API error — retrying in 60s';
-      renderCards();
+      // Wait 8.5s between each to stay under 8 credits/min
+      if (i < PAIRS.length - 1) await delay(8500);
     }
+
+    const now = new Date();
+    statusEl.textContent = `Last updated: ${now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})} — ${loaded}/${PAIRS.length} pairs loaded${adrCache ? '' : ' | ADR loading...'}`;
+
+    // Fetch ADR in background if no cache
+    if (!adrCache) fetchADRInBackground();
   }
 
-  // ── Fetch ADR in background (won't block price display) ──
-  async function fetchADRInBackground(batchA, batchB) {
+  // ── Fetch ADR in background ──
+  async function fetchADRInBackground() {
+    const statusEl = document.getElementById('last-updated');
     try {
-      document.getElementById('last-updated').textContent += ' | ADR: fetching batch 1...';
-      const tsA = await fetchTimeSeries(batchA);
-
-      document.getElementById('last-updated').textContent =
-        document.getElementById('last-updated').textContent.replace('batch 1', 'batch 2 in ~60s');
+      // Only fetch forex pairs (indices may not be on free tier)
+      const forexPairs = PAIRS.filter(p => p.api.includes('/')).map(p => p.api).join(',');
+      statusEl.textContent += ' | ADR fetching...';
+      const tsA = await fetchTimeSeries(forexPairs);
       await delay(65000);
-
-      const tsB = await fetchTimeSeries(batchB);
+      const indexPairs = PAIRS.filter(p => !p.api.includes('/')).map(p => p.api).join(',');
+      const tsB = await fetchTimeSeries(indexPairs);
       const combined = { ...tsA, ...tsB };
       applyADR(combined, null);
 
-      // Save cache
       const newCache = {};
       PAIRS.forEach(p => {
         const d = pairData[p.symbol];
         if (d && d.adr) newCache[p.symbol] = { adr: d.adr, adrPct: d.adrPct };
       });
       saveADRCache(newCache);
-
       recalcAll();
       const now = new Date();
-      document.getElementById('last-updated').textContent =
-        'Last updated: ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) + ' | ADR cached ✓';
+      statusEl.textContent = `Last updated: ${now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})} | ADR cached ✓`;
       renderCards();
     } catch(e) {}
   }
