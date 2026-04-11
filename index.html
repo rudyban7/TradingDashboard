@@ -304,7 +304,7 @@
     const batchB = PAIRS.slice(5).map(p => p.api).join(',');
 
     try {
-      // Fetch quotes: batch A then batch B with a short gap
+      // Step 1: fetch quotes for both batches (staggered 8s)
       const [qA, qB] = await Promise.all([
         fetchQuotes(batchA),
         delay(8000).then(() => fetchQuotes(batchB))
@@ -312,37 +312,57 @@
       applyQuotes(qA);
       applyQuotes(qB);
 
-      // ADR: use cache or fetch (heavy — only when cache is stale)
+      // Step 2: apply cached ADR if available, then render immediately
       const adrCache = loadADRCache();
-      if (!adrCache) {
-        document.getElementById('last-updated').textContent = 'Fetching ADR data...';
-        const tsA = await fetchTimeSeries(batchA);
-        await delay(65000); // wait to reset rate limit window
-        const tsB = await fetchTimeSeries(batchB);
-        const combined = { ...tsA, ...tsB };
-        applyADR(combined, null);
-
-        // Build cache
-        const newCache = {};
-        PAIRS.forEach(p => {
-          const d = pairData[p.symbol];
-          if (d && d.adr) newCache[p.symbol] = { adr: d.adr, adrPct: d.adrPct };
-        });
-        saveADRCache(newCache);
-      } else {
+      if (adrCache) {
         applyADR(null, adrCache);
       }
-
       recalcAll();
       const now = new Date();
       document.getElementById('last-updated').textContent =
-        'Last updated: ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        'Last updated: ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) +
+        (adrCache ? '' : ' — ADR loading...');
       renderCards();
+
+      // Step 3: if no ADR cache, fetch in background without blocking
+      if (!adrCache) {
+        fetchADRInBackground(batchA, batchB);
+      }
 
     } catch(err) {
       document.getElementById('last-updated').textContent = 'API error — retrying in 60s';
       renderCards();
     }
+  }
+
+  // ── Fetch ADR in background (won't block price display) ──
+  async function fetchADRInBackground(batchA, batchB) {
+    try {
+      document.getElementById('last-updated').textContent += ' | ADR: fetching batch 1...';
+      const tsA = await fetchTimeSeries(batchA);
+
+      document.getElementById('last-updated').textContent =
+        document.getElementById('last-updated').textContent.replace('batch 1', 'batch 2 in ~60s');
+      await delay(65000);
+
+      const tsB = await fetchTimeSeries(batchB);
+      const combined = { ...tsA, ...tsB };
+      applyADR(combined, null);
+
+      // Save cache
+      const newCache = {};
+      PAIRS.forEach(p => {
+        const d = pairData[p.symbol];
+        if (d && d.adr) newCache[p.symbol] = { adr: d.adr, adrPct: d.adrPct };
+      });
+      saveADRCache(newCache);
+
+      recalcAll();
+      const now = new Date();
+      document.getElementById('last-updated').textContent =
+        'Last updated: ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'}) + ' | ADR cached ✓';
+      renderCards();
+    } catch(e) {}
   }
 
   // ── Sessions UI ──
