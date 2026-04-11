@@ -207,92 +207,43 @@
     document.getElementById('stat-session').textContent = getSessionLabel();
   }
 
-  // ── ADR Cache (localStorage, 24h TTL) ──
-  const ADR_CACHE_KEY = 'adr_cache_v2';
-  const ADR_CACHE_TTL = 24 * 60 * 60 * 1000;
-
-  function loadADRCache() {
-    try {
-      const raw = localStorage.getItem(ADR_CACHE_KEY);
-      if (!raw) return null;
-      const { ts, data } = JSON.parse(raw);
-      if (Date.now() - ts > ADR_CACHE_TTL) return null;
-      return data;
-    } catch(e) { return null; }
-  }
-
-  function saveADRCache(data) {
-    try { localStorage.setItem(ADR_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch(e) {}
-  }
-
-  // ── API base: relative on Vercel, absolute when opening file:// locally ──
+// ── API base: relative on Vercel, absolute when opening file:// locally ──
   const API_BASE = location.protocol === 'file:'
     ? 'https://trading-dashboard-rosy.vercel.app'
     : '';
 
-  // ── Yahoo Finance via Vercel proxy: batch quotes ──
-  async function fetchQuotesBatch() {
-    const symbols = PAIRS.map(p => p.yahoo).join(',');
-    const res = await fetch(`${API_BASE}/api/quote?symbols=${encodeURIComponent(symbols)}`);
-    const data = await res.json();
-    const map = {};
-    (data.quoteResponse.result || []).forEach(q => { map[q.symbol] = q; });
-    return map;
+  // ── Single endpoint: fetch all prices + ADR history from Yahoo Finance v8 chart ──
+  async function fetchAllData() {
+    const res = await fetch(`${API_BASE}/api/data`);
+    return res.json();
   }
 
-  // ── Yahoo Finance via Vercel proxy: chart data for ADR (cached 24h) ──
-  async function fetchCandlesBatch() {
-    return Promise.allSettled(
-      PAIRS.map(p =>
-        fetch(`${API_BASE}/api/chart?symbol=${encodeURIComponent(p.yahoo)}&range=1mo`)
-          .then(r => r.json())
-      )
-    );
-  }
-
-  // ── Apply Yahoo Finance quote ──
-  function applyQuote(p, q) {
+  // ── Apply data to a pair ──
+  function applyData(p, d) {
+    if (!d || !d.price) return false;
     if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
-    const d = pairData[p.symbol];
-    if (q && q.regularMarketPrice) {
-      d.price     = q.regularMarketPrice;
-      d.change    = q.regularMarketChange    || 0;
-      d.changePct = q.regularMarketChangePercent || 0;
-      d.high      = q.regularMarketDayHigh;
-      d.low       = q.regularMarketDayLow;
-      d.close     = q.regularMarketPreviousClose;
-      return true;
+    const pd = pairData[p.symbol];
+    pd.price     = d.price;
+    pd.change    = d.change    || 0;
+    pd.changePct = d.changePct || 0;
+    pd.high      = d.high;
+    pd.low       = d.low;
+    pd.close     = d.prevClose;
+
+    // Compute ADR from historical highs/lows (15 days)
+    const hs = (d.highs || []).filter(h => h != null);
+    const ls = (d.lows  || []).filter(l => l != null);
+    if (hs.length > 1) {
+      const recent = Math.min(15, hs.length);
+      const ranges = hs.slice(-recent).map((h, i) => h - ls.slice(-recent)[i]);
+      const adr    = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+      pd.adr    = adr;
+      pd.adrPct = pd.price ? (adr / pd.price) * 100 : 0;
     }
-    return false;
+    return true;
   }
 
-  // ── Apply chart candles to get ADR ──
-  function applyCandles(symbol, chartData) {
-    if (!pairData[symbol]) pairData[symbol] = { symbol };
-    const d = pairData[symbol];
-    try {
-      const q = chartData.chart.result[0].indicators.quote[0];
-      const pairs = q.high.map((h, i) => ({ h, l: q.low[i] })).filter(c => c.h != null && c.l != null);
-      const recent = pairs.slice(-15);
-      const ranges = recent.map(c => c.h - c.l);
-      const adr = ranges.reduce((a, b) => a + b, 0) / ranges.length;
-      d.adr    = adr;
-      d.adrPct = d.price ? (adr / d.price) * 100 : 0;
-    } catch(e) {}
-  }
-
-  // ── Apply cached ADR ──
-  function applyCachedADR(cache) {
-    PAIRS.forEach(p => {
-      if (!cache[p.symbol]) return;
-      if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
-      const d = pairData[p.symbol];
-      d.adr    = cache[p.symbol].adr;
-      d.adrPct = d.price ? (d.adr / d.price) * 100 : cache[p.symbol].adrPct;
-    });
-  }
-
-  // ── Recalculate proximity & score ──
+// ── Recalculate proximity & score ──
   function recalcAll() {
     PAIRS.forEach(p => {
       const d = pairData[p.symbol];
@@ -309,65 +260,34 @@
     });
   }
 
-  // ── Main fetch — Yahoo Finance, all 9 pairs, refresh every 20 min ──
+  // ── Main fetch — all 9 pairs + ADR in one call, refresh every 20 min ──
   async function fetchAll() {
     const statusEl = document.getElementById('last-updated');
     statusEl.textContent = 'Fetching live prices...';
 
-    const adrCache = loadADRCache();
-    if (adrCache) applyCachedADR(adrCache);
-
     try {
-      const quoteMap = await fetchQuotesBatch();
+      const data = await fetchAllData();
 
       let loaded = 0;
       PAIRS.forEach(p => {
-        if (applyQuote(p, quoteMap[p.yahoo])) loaded++;
+        if (applyData(p, data[p.yahoo])) loaded++;
       });
 
       // Save prices to localStorage so alerts page can read them
       const livePrices = {};
       PAIRS.forEach(p => {
-        if (pairData[p.symbol] && pairData[p.symbol].price) {
-          livePrices[p.symbol] = pairData[p.symbol].price;
-        }
+        if (pairData[p.symbol]?.price) livePrices[p.symbol] = pairData[p.symbol].price;
       });
       saveToStorage('live_prices', livePrices);
 
       recalcAll();
       const now = new Date();
-      statusEl.textContent = `Last updated: ${now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})} — ${loaded}/${PAIRS.length} live${adrCache ? ' | ADR ✓' : ' | ADR loading...'}`;
+      statusEl.textContent = `Last updated: ${now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})} — ${loaded}/${PAIRS.length} live | ADR ✓`;
       renderCards();
-
-      if (!adrCache) fetchADRBackground();
     } catch(e) {
       statusEl.textContent = 'Fetch failed — retrying next cycle';
       console.error('fetchAll error', e);
     }
-  }
-
-  // ── Fetch ADR candles in background (cached 24h) ──
-  async function fetchADRBackground() {
-    const statusEl = document.getElementById('last-updated');
-    try {
-      const results = await fetchCandlesBatch();
-
-      results.forEach((r, i) => {
-        if (r.status === 'fulfilled') applyCandles(PAIRS[i].symbol, r.value);
-      });
-
-      const newCache = {};
-      PAIRS.forEach(p => {
-        const d = pairData[p.symbol];
-        if (d && d.adr) newCache[p.symbol] = { adr: d.adr, adrPct: d.adrPct };
-      });
-      if (Object.keys(newCache).length) saveADRCache(newCache);
-
-      recalcAll();
-      const now = new Date();
-      statusEl.textContent = `Last updated: ${now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})} | ADR cached ✓`;
-      renderCards();
-    } catch(e) { console.warn('ADR fetch failed', e); }
   }
 
   // ── Sessions UI ──
