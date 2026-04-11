@@ -74,7 +74,7 @@
   // ── State ──
   let pairData = {};
   let sortMode = 'score';
-  let refreshCountdown = 60;
+  let refreshCountdown = 20 * 60;
   let refreshTimer = null;
 
   // ── Scoring ──
@@ -208,7 +208,7 @@
   }
 
   // ── ADR Cache (localStorage, 24h TTL) ──
-  const ADR_CACHE_KEY = 'adr_cache';
+  const ADR_CACHE_KEY = 'adr_cache_v2';
   const ADR_CACHE_TTL = 24 * 60 * 60 * 1000;
 
   function loadADRCache() {
@@ -225,144 +225,149 @@
     try { localStorage.setItem(ADR_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch(e) {}
   }
 
-  function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+  // ── API base: relative on Vercel, absolute when opening file:// locally ──
+  const API_BASE = location.protocol === 'file:'
+    ? 'https://trading-dashboard-rosy.vercel.app'
+    : '';
 
-  // ── Fetch a single pair's quote ──
-  async function fetchSingleQuote(symbol) {
-    const res  = await fetch(`https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbol)}&apikey=${API_KEY}`);
+  // ── Yahoo Finance via Vercel proxy: batch quotes ──
+  async function fetchQuotesBatch() {
+    const symbols = PAIRS.map(p => p.yahoo).join(',');
+    const res = await fetch(`${API_BASE}/api/quote?symbols=${encodeURIComponent(symbols)}`);
     const data = await res.json();
-    return data;
+    const map = {};
+    (data.quoteResponse.result || []).forEach(q => { map[q.symbol] = q; });
+    return map;
   }
 
-  async function fetchTimeSeries(symbols) {
-    const res  = await fetch(`https://api.twelvedata.com/time_series?symbol=${symbols}&interval=1day&outputsize=16&apikey=${API_KEY}`);
-    const data = await res.json();
-    return data;
+  // ── Yahoo Finance via Vercel proxy: chart data for ADR (cached 24h) ──
+  async function fetchCandlesBatch() {
+    return Promise.allSettled(
+      PAIRS.map(p =>
+        fetch(`${API_BASE}/api/chart?symbol=${encodeURIComponent(p.yahoo)}&range=1mo`)
+          .then(r => r.json())
+      )
+    );
   }
 
-  // ── Apply a single quote response ──
-  function applySingleQuote(symbol, q) {
-    if (!pairData[symbol]) pairData[symbol] = { symbol };
-    const d = pairData[symbol];
-    if (q && q.price && !q.code) {
-      d.price     = q.price;
-      d.change    = q.change;
-      d.changePct = q.percent_change;
-      d.high      = q.high;
-      d.low       = q.low;
-      d.close     = q.previous_close;
+  // ── Apply Yahoo Finance quote ──
+  function applyQuote(p, q) {
+    if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
+    const d = pairData[p.symbol];
+    if (q && q.regularMarketPrice) {
+      d.price     = q.regularMarketPrice;
+      d.change    = q.regularMarketChange    || 0;
+      d.changePct = q.regularMarketChangePercent || 0;
+      d.high      = q.regularMarketDayHigh;
+      d.low       = q.regularMarketDayLow;
+      d.close     = q.regularMarketPreviousClose;
       return true;
     }
-    // Log error for debugging
-    if (q && q.message) console.warn(symbol, q.message);
     return false;
   }
 
-  // ── Apply ADR from time series ──
-  function applyADR(tsData, adrCache) {
+  // ── Apply chart candles to get ADR ──
+  function applyCandles(symbol, chartData) {
+    if (!pairData[symbol]) pairData[symbol] = { symbol };
+    const d = pairData[symbol];
+    try {
+      const q = chartData.chart.result[0].indicators.quote[0];
+      const pairs = q.high.map((h, i) => ({ h, l: q.low[i] })).filter(c => c.h != null && c.l != null);
+      const recent = pairs.slice(-15);
+      const ranges = recent.map(c => c.h - c.l);
+      const adr = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+      d.adr    = adr;
+      d.adrPct = d.price ? (adr / d.price) * 100 : 0;
+    } catch(e) {}
+  }
+
+  // ── Apply cached ADR ──
+  function applyCachedADR(cache) {
     PAIRS.forEach(p => {
+      if (!cache[p.symbol]) return;
       if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
       const d = pairData[p.symbol];
-
-      // Use cache if available
-      if (adrCache && adrCache[p.symbol]) {
-        d.adr    = adrCache[p.symbol].adr;
-        d.adrPct = d.price ? (d.adr / parseFloat(d.price)) * 100 : adrCache[p.symbol].adrPct;
-        return;
-      }
-
-      const ts = tsData ? (tsData[p.api] || tsData[p.symbol]) : null;
-      if (ts && ts.values && ts.values.length > 1 && !ts.code) {
-        const days   = ts.values.slice(1, 16);
-        const ranges = days.map(v => parseFloat(v.high) - parseFloat(v.low));
-        const adr    = ranges.reduce((a,b) => a+b, 0) / ranges.length;
-        d.adr        = adr;
-        d.adrPct     = d.price ? (adr / parseFloat(d.price)) * 100 : 0;
-      }
+      d.adr    = cache[p.symbol].adr;
+      d.adrPct = d.price ? (d.adr / d.price) * 100 : cache[p.symbol].adrPct;
     });
   }
 
-  // ── Recalculate proximity & score for all pairs ──
+  // ── Recalculate proximity & score ──
   function recalcAll() {
     PAIRS.forEach(p => {
       const d = pairData[p.symbol];
       if (!d) return;
       if (d.high && d.low && d.price) {
-        const price    = parseFloat(d.price);
-        const high     = parseFloat(d.high);
-        const low      = parseFloat(d.low);
-        const range    = high - low;
-        const minDist  = Math.min(Math.abs(price - high), Math.abs(price - low));
-        d.proximity    = range > 0 ? (minDist / range) * 100 : 100;
+        const price   = parseFloat(d.price);
+        const high    = parseFloat(d.high);
+        const low     = parseFloat(d.low);
+        const range   = high - low;
+        const minDist = Math.min(Math.abs(price - high), Math.abs(price - low));
+        d.proximity   = range > 0 ? (minDist / range) * 100 : 100;
       }
       d.score = scorePair(d);
     });
   }
 
-  // ── Main fetch — one pair at a time, 8s gap = 7.5/min (under limit) ──
+  // ── Main fetch — Yahoo Finance, all 9 pairs, refresh every 20 min ──
   async function fetchAll() {
     const statusEl = document.getElementById('last-updated');
+    statusEl.textContent = 'Fetching live prices...';
 
-    // Apply cached ADR immediately
     const adrCache = loadADRCache();
-    if (adrCache) applyADR(null, adrCache);
+    if (adrCache) applyCachedADR(adrCache);
 
-    // Fetch each pair individually with gap to stay under rate limit
-    let loaded = 0;
-    for (let i = 0; i < PAIRS.length; i++) {
-      const p = PAIRS[i];
-      try {
-        statusEl.textContent = `Fetching ${p.symbol}... (${i+1}/${PAIRS.length})`;
-        const q = await fetchSingleQuote(p.api);
-        const ok = applySingleQuote(p.symbol, q);
-        if (ok) {
-          loaded++;
-          recalcAll();
-          renderCards();
-        } else {
-          // Mark as unavailable
-          if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
-          pairData[p.symbol].unavailable = true;
+    try {
+      const quoteMap = await fetchQuotesBatch();
+
+      let loaded = 0;
+      PAIRS.forEach(p => {
+        if (applyQuote(p, quoteMap[p.yahoo])) loaded++;
+      });
+
+      // Save prices to localStorage so alerts page can read them
+      const livePrices = {};
+      PAIRS.forEach(p => {
+        if (pairData[p.symbol] && pairData[p.symbol].price) {
+          livePrices[p.symbol] = pairData[p.symbol].price;
         }
-      } catch(e) {
-        console.warn('Fetch error for', p.symbol, e);
-      }
-      // Wait 8.5s between each to stay under 8 credits/min
-      if (i < PAIRS.length - 1) await delay(8500);
+      });
+      saveToStorage('live_prices', livePrices);
+
+      recalcAll();
+      const now = new Date();
+      statusEl.textContent = `Last updated: ${now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})} — ${loaded}/${PAIRS.length} live${adrCache ? ' | ADR ✓' : ' | ADR loading...'}`;
+      renderCards();
+
+      if (!adrCache) fetchADRBackground();
+    } catch(e) {
+      statusEl.textContent = 'Fetch failed — retrying next cycle';
+      console.error('fetchAll error', e);
     }
-
-    const now = new Date();
-    statusEl.textContent = `Last updated: ${now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})} — ${loaded}/${PAIRS.length} pairs loaded${adrCache ? '' : ' | ADR loading...'}`;
-
-    // Fetch ADR in background if no cache
-    if (!adrCache) fetchADRInBackground();
   }
 
-  // ── Fetch ADR in background ──
-  async function fetchADRInBackground() {
+  // ── Fetch ADR candles in background (cached 24h) ──
+  async function fetchADRBackground() {
     const statusEl = document.getElementById('last-updated');
     try {
-      // Only fetch forex pairs (indices may not be on free tier)
-      const forexPairs = PAIRS.filter(p => p.api.includes('/')).map(p => p.api).join(',');
-      statusEl.textContent += ' | ADR fetching...';
-      const tsA = await fetchTimeSeries(forexPairs);
-      await delay(65000);
-      const indexPairs = PAIRS.filter(p => !p.api.includes('/')).map(p => p.api).join(',');
-      const tsB = await fetchTimeSeries(indexPairs);
-      const combined = { ...tsA, ...tsB };
-      applyADR(combined, null);
+      const results = await fetchCandlesBatch();
+
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') applyCandles(PAIRS[i].symbol, r.value);
+      });
 
       const newCache = {};
       PAIRS.forEach(p => {
         const d = pairData[p.symbol];
         if (d && d.adr) newCache[p.symbol] = { adr: d.adr, adrPct: d.adrPct };
       });
-      saveADRCache(newCache);
+      if (Object.keys(newCache).length) saveADRCache(newCache);
+
       recalcAll();
       const now = new Date();
       statusEl.textContent = `Last updated: ${now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})} | ADR cached ✓`;
       renderCards();
-    } catch(e) {}
+    } catch(e) { console.warn('ADR fetch failed', e); }
   }
 
   // ── Sessions UI ──
@@ -373,18 +378,26 @@
     document.getElementById('sess-newyork').classList.toggle('active', s.newyork);
   }
 
-  // ── Countdown ──
+  // ── Countdown (20 min refresh) ──
+  const REFRESH_SECS = 20 * 60;
+
+  function fmtCountdown(s) {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m > 0 ? `${m}m ${sec < 10 ? '0' + sec : sec}s` : `${sec}s`;
+  }
+
   function startRefreshCycle() {
     clearInterval(refreshTimer);
-    refreshCountdown = 60;
+    refreshCountdown = REFRESH_SECS;
     refreshTimer = setInterval(() => {
       refreshCountdown--;
       const el = document.getElementById('stat-refresh');
-      if (el) el.textContent = refreshCountdown + 's';
+      if (el) el.textContent = fmtCountdown(refreshCountdown);
       if (refreshCountdown <= 0) {
         fetchAll();
         updateSessionUI();
-        refreshCountdown = 60;
+        refreshCountdown = REFRESH_SECS;
       }
     }, 1000);
   }

@@ -219,44 +219,38 @@
     }
   }
 
-  // ── Fetch prices and check alerts ──
-  async function checkAlerts() {
+  // ── Check alerts against prices cached by watchlist page ──
+  function checkAlerts() {
     const pending = alerts.filter(a => a.status === 'pending');
     if (!pending.length) return;
 
-    const symbols = [...new Set(pending.map(a => a.api || a.symbol))].join(',');
-    try {
-      const res  = await fetch(`https://api.twelvedata.com/price?symbol=${symbols}&apikey=${API_KEY}`);
-      const data = await res.json();
+    // Read prices from localStorage (populated by watchlist every 20 min)
+    const stored = loadFromStorage('live_prices');
+    if (stored) Object.assign(livePrices, stored);
 
-      // Normalise: single symbol returns {price} directly, multiple returns {SYM:{price}}
-      PAIRS.forEach(p => {
-        const d = data[p.api] || data[p.symbol] || data;
-        if (d && d.price) livePrices[p.symbol] = d.price;
-      });
+    const now = new Date();
+    const hasAnyPrice = Object.keys(livePrices).length > 0;
+    document.getElementById('price-fetch-time').textContent = hasAnyPrice
+      ? 'Checked ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'})
+      : 'Open watchlist to load prices';
 
-      const now = new Date();
-      document.getElementById('price-fetch-time').textContent =
-        'Checked ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    let triggered = false;
+    alerts.forEach(a => {
+      if (a.status !== 'pending') return;
+      const price = livePrices[a.symbol];
+      if (!price) return;
+      const p = parseFloat(price);
+      const hit = a.condition === 'ABOVE' ? p >= a.target : p <= a.target;
+      if (hit) {
+        a.status      = 'triggered';
+        a.triggeredAt = now.toISOString();
+        triggered     = true;
+        fireNotification(a, p);
+      }
+    });
 
-      let triggered = false;
-      alerts.forEach(a => {
-        if (a.status !== 'pending') return;
-        const price = livePrices[a.symbol];
-        if (!price) return;
-        const p = parseFloat(price);
-        const hit = a.condition === 'ABOVE' ? p >= a.target : p <= a.target;
-        if (hit) {
-          a.status      = 'triggered';
-          a.triggeredAt = now.toISOString();
-          triggered     = true;
-          fireNotification(a, p);
-        }
-      });
-
-      if (triggered) saveToStorage('alerts', alerts);
-      renderAlerts();
-    } catch(e) {}
+    if (triggered) saveToStorage('alerts', alerts);
+    renderAlerts();
   }
 
   // ── Browser notification ──
@@ -274,7 +268,7 @@
   checkNotifBanner();
   renderAlerts();
   checkAlerts();
-  setInterval(checkAlerts, 30000);
+  setInterval(checkAlerts, 10000);
 </script>
 </body>
 </html>

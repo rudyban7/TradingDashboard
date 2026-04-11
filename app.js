@@ -2,18 +2,16 @@
    TRADING DASHBOARD — Shared Utilities
    ============================================================ */
 
-const API_KEY = '8b9b5b24559e4f45a3cb8b3e7dd5dd1a';
-
 const PAIRS = [
-  { symbol: 'USD/JPY',    api: 'USD/JPY',    name: 'Dollar Yen',        decimals: 3, sessions: ['tokyo','london','newyork'] },
-  { symbol: 'EUR/USD',    api: 'EUR/USD',    name: 'Euro Dollar',       decimals: 5, sessions: ['london','newyork'] },
-  { symbol: 'GBP/USD',    api: 'GBP/USD',    name: 'Pound Dollar',      decimals: 5, sessions: ['london','newyork'] },
-  { symbol: 'XAU/USD',    api: 'XAU/USD',    name: 'Gold',              decimals: 2, sessions: ['london','newyork'] },
-  { symbol: 'EUR/JPY',    api: 'EUR/JPY',    name: 'Euro Yen',          decimals: 3, sessions: ['tokyo','london'] },
-  { symbol: 'GER40',      api: 'GER40',      name: 'DAX 40',            decimals: 1, sessions: ['london'] },
-  { symbol: 'JP225USD',   api: 'JP225USD',   name: 'Nikkei 225',        decimals: 1, sessions: ['tokyo'] },
-  { symbol: 'FTSE100',    api: 'FTSE100',    name: 'FTSE 100',          decimals: 1, sessions: ['london'] },
-  { symbol: 'SPX500',     api: 'SPX500',     name: 'S&P 500',           decimals: 1, sessions: ['newyork'] },
+  { symbol: 'USD/JPY',  yahoo: 'USDJPY=X', name: 'Dollar Yen',   decimals: 3, sessions: ['tokyo','london','newyork'] },
+  { symbol: 'EUR/USD',  yahoo: 'EURUSD=X', name: 'Euro Dollar',  decimals: 5, sessions: ['london','newyork'] },
+  { symbol: 'GBP/USD',  yahoo: 'GBPUSD=X', name: 'Pound Dollar', decimals: 5, sessions: ['london','newyork'] },
+  { symbol: 'XAU/USD',  yahoo: 'XAUUSD=X', name: 'Gold',         decimals: 2, sessions: ['london','newyork'] },
+  { symbol: 'EUR/JPY',  yahoo: 'EURJPY=X', name: 'Euro Yen',     decimals: 3, sessions: ['tokyo','london'] },
+  { symbol: 'GER40',    yahoo: '^GDAXI',   name: 'DAX 40',       decimals: 1, sessions: ['london'] },
+  { symbol: 'JP225USD', yahoo: '^N225',    name: 'Nikkei 225',   decimals: 1, sessions: ['tokyo'] },
+  { symbol: 'FTSE100',  yahoo: '^FTSE',    name: 'FTSE 100',     decimals: 1, sessions: ['london'] },
+  { symbol: 'SPX500',   yahoo: '^GSPC',    name: 'S&P 500',      decimals: 1, sessions: ['newyork'] },
 ];
 
 /* ── Session Detection ── */
