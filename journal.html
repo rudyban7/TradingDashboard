@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RB Trading | Journal</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="nav-placeholder"></div>
+
+<div class="page">
+  <div class="page-header">
+    <div class="page-title">Trade Journal</div>
+    <div class="page-sub">Every trade logged. No excuses.</div>
+  </div>
+
+  <!-- Quick stats -->
+  <div class="stats-bar" id="journal-stats">
+    <div class="stat-chip">
+      <div class="stat-chip-label">Total Trades</div>
+      <div class="stat-chip-value" id="jstat-total">0</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-chip-label">Win Rate</div>
+      <div class="stat-chip-value green" id="jstat-wr">--%</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-chip-label">Avg RR</div>
+      <div class="stat-chip-value gold" id="jstat-rr">--</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-chip-label">Wins</div>
+      <div class="stat-chip-value green" id="jstat-wins">0</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-chip-label">Losses</div>
+      <div class="stat-chip-value red" id="jstat-losses">0</div>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <!-- Left: Add Trade Form -->
+    <div class="panel">
+      <div class="panel-title">Log a Trade</div>
+
+      <div class="form-group">
+        <label class="form-label">Pair</label>
+        <select class="form-select" id="f-pair">
+          <option value="">Select pair...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Direction</label>
+        <div class="toggle-group">
+          <button class="toggle-btn" id="btn-buy" onclick="setDir('BUY')">BUY</button>
+          <button class="toggle-btn" id="btn-sell" onclick="setDir('SELL')">SELL</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Date &amp; Time</label>
+        <input type="datetime-local" class="form-input" id="f-datetime" />
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Entry</label>
+          <input type="number" step="any" class="form-input" id="f-entry" placeholder="1.08500" oninput="autoRR()" />
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Stop Loss</label>
+          <input type="number" step="any" class="form-input" id="f-sl" placeholder="1.08200" oninput="autoRR()" />
+        </div>
+      </div>
+      <div style="height:10px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">Take Profit</label>
+          <input type="number" step="any" class="form-input" id="f-tp" placeholder="1.09100" oninput="autoRR()" />
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label">RR (auto)</label>
+          <input type="text" class="form-input" id="f-rr" placeholder="--" readonly style="color:var(--gold);font-family:'Space Mono',monospace" />
+        </div>
+      </div>
+
+      <div style="height:14px"></div>
+
+      <div class="form-group">
+        <label class="form-label">Result</label>
+        <div class="result-group">
+          <button class="result-btn" id="res-win"  onclick="setResult('WIN')">WIN</button>
+          <button class="result-btn" id="res-loss" onclick="setResult('LOSS')">LOSS</button>
+          <button class="result-btn" id="res-be"   onclick="setResult('BE')">B/E</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Notes</label>
+        <textarea class="form-textarea" id="f-notes" placeholder="Entry reason, mistakes, what went well..."></textarea>
+      </div>
+
+      <button class="btn btn-primary btn-full" onclick="submitTrade()">Log Trade</button>
+      <div id="form-msg" style="font-size:0.75rem;margin-top:8px;text-align:center;color:var(--green);min-height:18px"></div>
+    </div>
+
+    <!-- Right: Trades Table -->
+    <div>
+      <!-- Filters -->
+      <div class="filter-row">
+        <select class="form-select" id="filter-pair" onchange="renderTable()" style="min-width:130px">
+          <option value="">All Pairs</option>
+        </select>
+        <select class="form-select" id="filter-result" onchange="renderTable()">
+          <option value="">All Results</option>
+          <option value="WIN">Wins</option>
+          <option value="LOSS">Losses</option>
+          <option value="BE">Breakeven</option>
+        </select>
+        <select class="form-select" id="filter-dir" onchange="renderTable()">
+          <option value="">All Directions</option>
+          <option value="BUY">Buys</option>
+          <option value="SELL">Sells</option>
+        </select>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Pair</th>
+              <th>Dir</th>
+              <th>Entry</th>
+              <th>SL</th>
+              <th>TP</th>
+              <th>RR</th>
+              <th>Result</th>
+              <th>Notes</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="trade-tbody"></tbody>
+        </table>
+      </div>
+      <div id="table-empty" class="empty-state" style="display:none">
+        <div class="empty-state-icon">📒</div>
+        <div class="empty-state-title">No trades logged yet</div>
+        <div class="empty-state-sub">Use the form to log your first trade</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  document.getElementById('nav-placeholder').innerHTML = getNavHTML('journal');
+  startClock();
+
+  let direction = '';
+  let result = '';
+  let trades = loadFromStorage('trades') || [];
+
+  // ── Populate pair dropdowns ──
+  function populatePairDropdowns() {
+    const opts = PAIRS.map(p => `<option value="${p.symbol}">${p.symbol}</option>`).join('');
+    document.getElementById('f-pair').innerHTML = '<option value="">Select pair...</option>' + opts;
+    document.getElementById('filter-pair').innerHTML = '<option value="">All Pairs</option>' + opts;
+  }
+
+  // ── Set default datetime ──
+  function setDefaultDatetime() {
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    document.getElementById('f-datetime').value = local.toISOString().slice(0,16);
+  }
+
+  // ── Direction toggle ──
+  function setDir(d) {
+    direction = d;
+    document.getElementById('btn-buy').className  = 'toggle-btn' + (d === 'BUY'  ? ' active-buy'  : '');
+    document.getElementById('btn-sell').className = 'toggle-btn' + (d === 'SELL' ? ' active-sell' : '');
+  }
+
+  // ── Result toggle ──
+  function setResult(r) {
+    result = r;
+    document.getElementById('res-win').className  = 'result-btn' + (r === 'WIN'  ? ' active-win'  : '');
+    document.getElementById('res-loss').className = 'result-btn' + (r === 'LOSS' ? ' active-loss' : '');
+    document.getElementById('res-be').className   = 'result-btn' + (r === 'BE'   ? ' active-be'   : '');
+  }
+
+  // ── Auto RR ──
+  function autoRR() {
+    const entry = document.getElementById('f-entry').value;
+    const sl    = document.getElementById('f-sl').value;
+    const tp    = document.getElementById('f-tp').value;
+    const rr    = calcRR(entry, sl, tp, direction);
+    document.getElementById('f-rr').value = rr ? '1:' + rr : '--';
+  }
+
+  // ── Submit ──
+  function submitTrade() {
+    const pair     = document.getElementById('f-pair').value;
+    const datetime = document.getElementById('f-datetime').value;
+    const entry    = document.getElementById('f-entry').value;
+    const sl       = document.getElementById('f-sl').value;
+    const tp       = document.getElementById('f-tp').value;
+    const notes    = document.getElementById('f-notes').value.trim();
+    const msg      = document.getElementById('form-msg');
+
+    if (!pair)      { msg.textContent = 'Select a pair.'; msg.style.color = 'var(--red)'; return; }
+    if (!direction) { msg.textContent = 'Choose BUY or SELL.'; msg.style.color = 'var(--red)'; return; }
+    if (!result)    { msg.textContent = 'Select a result.'; msg.style.color = 'var(--red)'; return; }
+    if (!entry)     { msg.textContent = 'Enter your entry price.'; msg.style.color = 'var(--red)'; return; }
+
+    const rr = calcRR(entry, sl, tp, direction);
+
+    const trade = {
+      id: generateId(),
+      datetime: datetime || new Date().toISOString(),
+      pair,
+      direction,
+      entry: parseFloat(entry),
+      sl:    sl ? parseFloat(sl) : null,
+      tp:    tp ? parseFloat(tp) : null,
+      rr:    rr ? parseFloat(rr) : null,
+      result,
+      notes,
+    };
+
+    trades.unshift(trade);
+    saveToStorage('trades', trades);
+    msg.textContent = 'Trade logged ✓';
+    msg.style.color = 'var(--green)';
+    setTimeout(() => msg.textContent = '', 2500);
+
+    // Reset form
+    document.getElementById('f-pair').value = '';
+    document.getElementById('f-entry').value = '';
+    document.getElementById('f-sl').value = '';
+    document.getElementById('f-tp').value = '';
+    document.getElementById('f-rr').value = '';
+    document.getElementById('f-notes').value = '';
+    setDir('');
+    setResult('');
+    setDefaultDatetime();
+
+    renderTable();
+    updateStats();
+  }
+
+  // ── Delete trade ──
+  function deleteTrade(id) {
+    trades = trades.filter(t => t.id !== id);
+    saveToStorage('trades', trades);
+    renderTable();
+    updateStats();
+  }
+
+  // ── Render table ──
+  function renderTable() {
+    const fPair   = document.getElementById('filter-pair').value;
+    const fResult = document.getElementById('filter-result').value;
+    const fDir    = document.getElementById('filter-dir').value;
+
+    let filtered = trades.slice();
+    if (fPair)   filtered = filtered.filter(t => t.pair      === fPair);
+    if (fResult) filtered = filtered.filter(t => t.result    === fResult);
+    if (fDir)    filtered = filtered.filter(t => t.direction === fDir);
+
+    const tbody = document.getElementById('trade-tbody');
+    const empty = document.getElementById('table-empty');
+
+    if (!filtered.length) {
+      tbody.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+
+    tbody.innerHTML = filtered.map(t => `
+      <tr>
+        <td class="mono" style="font-size:0.72rem;color:var(--text-2)">${formatDateTime(t.datetime)}</td>
+        <td><span style="font-family:'Space Mono',monospace;font-weight:700;font-size:0.82rem">${t.pair}</span></td>
+        <td><span class="badge badge-${t.direction.toLowerCase()}">${t.direction}</span></td>
+        <td class="mono">${t.entry}</td>
+        <td class="mono" style="color:var(--text-2)">${t.sl || '--'}</td>
+        <td class="mono" style="color:var(--text-2)">${t.tp || '--'}</td>
+        <td class="mono" style="color:var(--gold)">${t.rr ? '1:'+t.rr : '--'}</td>
+        <td><span class="badge badge-${t.result === 'WIN' ? 'win' : t.result === 'LOSS' ? 'loss' : 'be'}">${t.result}</span></td>
+        <td style="color:var(--text-2);font-size:0.75rem;max-width:160px;overflow:hidden;text-overflow:ellipsis">${t.notes || '--'}</td>
+        <td><button class="btn btn-danger btn-sm" onclick="deleteTrade('${t.id}')">✕</button></td>
+      </tr>
+    `).join('');
+  }
+
+  // ── Update summary stats ──
+  function updateStats() {
+    const total  = trades.length;
+    const wins   = trades.filter(t => t.result === 'WIN').length;
+    const losses = trades.filter(t => t.result === 'LOSS').length;
+    const wr     = total > 0 ? ((wins / total) * 100).toFixed(0) : '--';
+    const rrArr  = trades.filter(t => t.rr).map(t => t.rr);
+    const avgRR  = rrArr.length ? (rrArr.reduce((a,b) => a+b, 0) / rrArr.length).toFixed(2) : '--';
+
+    document.getElementById('jstat-total').textContent  = total;
+    document.getElementById('jstat-wr').textContent     = total > 0 ? wr + '%' : '--%';
+    document.getElementById('jstat-rr').textContent     = avgRR !== '--' ? '1:' + avgRR : '--';
+    document.getElementById('jstat-wins').textContent   = wins;
+    document.getElementById('jstat-losses').textContent = losses;
+  }
+
+  // ── Init ──
+  populatePairDropdowns();
+  setDefaultDatetime();
+  renderTable();
+  updateStats();
+</script>
+</body>
+</html>

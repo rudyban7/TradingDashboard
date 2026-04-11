@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RB Trading | Alerts</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="nav-placeholder"></div>
+
+<div class="page">
+  <div class="page-header">
+    <div class="page-title">Price Alerts</div>
+    <div class="page-sub" id="alert-status-bar">Checking prices every 30 seconds</div>
+  </div>
+
+  <!-- Notif permission banner -->
+  <div id="notif-banner" style="display:none;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);border-radius:8px;padding:12px 16px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <span style="font-size:0.82rem;color:var(--amber)">🔔 Enable browser notifications to get alerts when price hits your target</span>
+    <button class="btn btn-ghost btn-sm" onclick="requestNotifPerm()">Enable</button>
+  </div>
+
+  <div class="two-col">
+    <!-- Left: Create alert -->
+    <div class="panel">
+      <div class="panel-title">Set Alert</div>
+
+      <div class="form-group">
+        <label class="form-label">Pair</label>
+        <select class="form-select" id="a-pair">
+          <option value="">Select pair...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Condition</label>
+        <div class="toggle-group">
+          <button class="toggle-btn" id="btn-above" onclick="setCond('ABOVE')">ABOVE</button>
+          <button class="toggle-btn" id="btn-below" onclick="setCond('BELOW')">BELOW</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Target Price</label>
+        <input type="number" step="any" class="form-input" id="a-price" placeholder="e.g. 1.09500" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Notes (optional)</label>
+        <input type="text" class="form-input" id="a-notes" placeholder="e.g. Daily high resistance" />
+      </div>
+
+      <button class="btn btn-primary btn-full" onclick="addAlert()">Set Alert</button>
+      <div id="alert-form-msg" style="font-size:0.75rem;margin-top:8px;text-align:center;color:var(--green);min-height:18px"></div>
+    </div>
+
+    <!-- Right: Alert list -->
+    <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <span style="font-size:0.8rem;color:var(--text-2);font-weight:600">Active Alerts</span>
+        <span class="live-label" id="price-fetch-time">--</span>
+      </div>
+
+      <div id="active-alerts" class="alert-list"></div>
+
+      <div id="alerts-empty" class="empty-state" style="display:none;padding:40px 20px">
+        <div class="empty-state-icon">🔔</div>
+        <div class="empty-state-title">No active alerts</div>
+        <div class="empty-state-sub">Set an alert to get notified when price hits a level</div>
+      </div>
+
+      <div style="margin-top:28px">
+        <div style="font-size:0.8rem;color:var(--text-2);font-weight:600;margin-bottom:12px">Triggered History</div>
+        <div id="triggered-alerts" class="alert-list"></div>
+        <div id="triggered-empty" style="font-size:0.75rem;color:var(--text-3);padding:10px 0">No triggered alerts yet</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  document.getElementById('nav-placeholder').innerHTML = getNavHTML('alerts');
+  startClock();
+
+  let condition = '';
+  let alerts = loadFromStorage('alerts') || [];
+  let livePrices = {};
+
+  // ── Populate pair dropdown ──
+  PAIRS.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.symbol;
+    opt.textContent = p.symbol;
+    document.getElementById('a-pair').appendChild(opt);
+  });
+
+  // ── Notification permission ──
+  function checkNotifBanner() {
+    if ('Notification' in window && Notification.permission === 'default') {
+      document.getElementById('notif-banner').style.display = 'flex';
+    } else {
+      document.getElementById('notif-banner').style.display = 'none';
+    }
+  }
+
+  function requestNotifPerm() {
+    Notification.requestPermission().then(() => checkNotifBanner());
+  }
+
+  // ── Condition toggle ──
+  function setCond(c) {
+    condition = c;
+    document.getElementById('btn-above').className = 'toggle-btn' + (c === 'ABOVE' ? ' active-buy' : '');
+    document.getElementById('btn-below').className = 'toggle-btn' + (c === 'BELOW' ? ' active-sell' : '');
+  }
+
+  // ── Add alert ──
+  function addAlert() {
+    const pair  = document.getElementById('a-pair').value;
+    const price = document.getElementById('a-price').value;
+    const notes = document.getElementById('a-notes').value.trim();
+    const msg   = document.getElementById('alert-form-msg');
+
+    if (!pair)      { msg.textContent = 'Select a pair.'; msg.style.color = 'var(--red)'; return; }
+    if (!condition) { msg.textContent = 'Choose ABOVE or BELOW.'; msg.style.color = 'var(--red)'; return; }
+    if (!price)     { msg.textContent = 'Enter a target price.'; msg.style.color = 'var(--red)'; return; }
+
+    const alert = {
+      id: generateId(),
+      symbol: pair,
+      condition,
+      target: parseFloat(price),
+      notes,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      triggeredAt: null,
+    };
+
+    alerts.push(alert);
+    saveToStorage('alerts', alerts);
+
+    document.getElementById('a-pair').value  = '';
+    document.getElementById('a-price').value = '';
+    document.getElementById('a-notes').value = '';
+    setCond('');
+
+    msg.textContent = 'Alert set ✓';
+    msg.style.color = 'var(--green)';
+    setTimeout(() => msg.textContent = '', 2500);
+
+    renderAlerts();
+  }
+
+  // ── Delete alert ──
+  function deleteAlert(id) {
+    alerts = alerts.filter(a => a.id !== id);
+    saveToStorage('alerts', alerts);
+    renderAlerts();
+  }
+
+  // ── Render alerts ──
+  function renderAlerts() {
+    const active    = alerts.filter(a => a.status === 'pending');
+    const triggered = alerts.filter(a => a.status === 'triggered');
+
+    const activeEl    = document.getElementById('active-alerts');
+    const emptyEl     = document.getElementById('alerts-empty');
+    const triggeredEl = document.getElementById('triggered-alerts');
+    const trigEmptyEl = document.getElementById('triggered-empty');
+
+    if (!active.length) {
+      activeEl.innerHTML = '';
+      emptyEl.style.display = 'block';
+    } else {
+      emptyEl.style.display = 'none';
+      activeEl.innerHTML = active.map(a => {
+        const currentPrice = livePrices[a.symbol];
+        const pairCfg = PAIRS.find(p => p.symbol === a.symbol);
+        const dec = pairCfg ? pairCfg.decimals : 5;
+        const currentStr = currentPrice ? parseFloat(currentPrice).toFixed(dec) : '--';
+        const targetStr  = a.target.toFixed(dec);
+        const condLabel  = a.condition === 'ABOVE' ? '▲ Above' : '▼ Below';
+        return `
+          <div class="alert-item">
+            <div class="alert-item-symbol">${a.symbol}</div>
+            <div class="alert-item-condition">
+              ${condLabel} <span style="color:var(--gold);font-family:'Space Mono',monospace">${targetStr}</span>
+              ${a.notes ? `<br><span style="font-size:0.7rem;color:var(--text-3)">${a.notes}</span>` : ''}
+              <br><span style="font-size:0.7rem;color:var(--text-3)">Current: ${currentStr}</span>
+            </div>
+            <span class="alert-status pending">PENDING</span>
+            <button class="btn btn-danger btn-sm" onclick="deleteAlert('${a.id}')">✕</button>
+          </div>`;
+      }).join('');
+    }
+
+    if (!triggered.length) {
+      triggeredEl.innerHTML = '';
+      trigEmptyEl.style.display = 'block';
+    } else {
+      trigEmptyEl.style.display = 'none';
+      triggeredEl.innerHTML = triggered.slice(0, 10).map(a => {
+        const pairCfg = PAIRS.find(p => p.symbol === a.symbol);
+        const dec = pairCfg ? pairCfg.decimals : 5;
+        return `
+          <div class="alert-item triggered">
+            <div class="alert-item-symbol" style="color:var(--text-2)">${a.symbol}</div>
+            <div class="alert-item-condition" style="color:var(--text-3)">
+              ${a.condition === 'ABOVE' ? '▲ Above' : '▼ Below'} ${a.target.toFixed(dec)}
+              ${a.notes ? ` — ${a.notes}` : ''}
+            </div>
+            <span class="alert-status triggered">HIT</span>
+            <button class="btn btn-ghost btn-sm" onclick="deleteAlert('${a.id}')">✕</button>
+          </div>`;
+      }).join('');
+    }
+  }
+
+  // ── Fetch prices and check alerts ──
+  async function checkAlerts() {
+    const pending = alerts.filter(a => a.status === 'pending');
+    if (!pending.length) return;
+
+    const symbols = [...new Set(pending.map(a => a.api || a.symbol))].join(',');
+    try {
+      const res  = await fetch(`https://api.twelvedata.com/price?symbol=${symbols}&apikey=${API_KEY}`);
+      const data = await res.json();
+
+      // Normalise: single symbol returns {price} directly, multiple returns {SYM:{price}}
+      PAIRS.forEach(p => {
+        const d = data[p.api] || data[p.symbol] || data;
+        if (d && d.price) livePrices[p.symbol] = d.price;
+      });
+
+      const now = new Date();
+      document.getElementById('price-fetch-time').textContent =
+        'Checked ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+
+      let triggered = false;
+      alerts.forEach(a => {
+        if (a.status !== 'pending') return;
+        const price = livePrices[a.symbol];
+        if (!price) return;
+        const p = parseFloat(price);
+        const hit = a.condition === 'ABOVE' ? p >= a.target : p <= a.target;
+        if (hit) {
+          a.status      = 'triggered';
+          a.triggeredAt = now.toISOString();
+          triggered     = true;
+          fireNotification(a, p);
+        }
+      });
+
+      if (triggered) saveToStorage('alerts', alerts);
+      renderAlerts();
+    } catch(e) {}
+  }
+
+  // ── Browser notification ──
+  function fireNotification(alert, currentPrice) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const pairCfg = PAIRS.find(p => p.symbol === alert.symbol);
+    const dec = pairCfg ? pairCfg.decimals : 5;
+    new Notification(`🔔 ${alert.symbol} Alert Hit!`, {
+      body: `Price ${currentPrice.toFixed(dec)} is ${alert.condition.toLowerCase()} your target ${alert.target.toFixed(dec)}${alert.notes ? '\n' + alert.notes : ''}`,
+      icon: '',
+    });
+  }
+
+  // ── Init ──
+  checkNotifBanner();
+  renderAlerts();
+  checkAlerts();
+  setInterval(checkAlerts, 30000);
+</script>
+</body>
+</html>

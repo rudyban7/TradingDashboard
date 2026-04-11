@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RB Trading | Watchlist</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="nav-placeholder"></div>
+
+<div class="page">
+  <div class="page-header">
+    <div class="page-title">Watchlist</div>
+    <div class="page-sub" id="last-updated">Fetching live data...</div>
+  </div>
+
+  <!-- Session Bar -->
+  <div class="session-bar" id="session-bar">
+    <div class="session-tag" id="sess-tokyo"><div class="dot"></div>Tokyo</div>
+    <div class="session-tag" id="sess-london"><div class="dot"></div>London</div>
+    <div class="session-tag" id="sess-newyork"><div class="dot"></div>New York</div>
+  </div>
+
+  <!-- Stats Bar -->
+  <div class="stats-bar">
+    <div class="stat-chip">
+      <div class="stat-chip-label">Pairs</div>
+      <div class="stat-chip-value" id="stat-pairs">9</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-chip-label">Hot</div>
+      <div class="stat-chip-value red" id="stat-hot">--</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-chip-label">Warm</div>
+      <div class="stat-chip-value" style="color:var(--amber)" id="stat-warm">--</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-chip-label">Active Session</div>
+      <div class="stat-chip-value gold" id="stat-session">--</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-chip-label">Next Refresh</div>
+      <div class="stat-chip-value" id="stat-refresh" style="font-size:0.78rem">--</div>
+    </div>
+  </div>
+
+  <!-- Sort Controls -->
+  <div class="controls-row">
+    <span class="controls-label">Sort by</span>
+    <button class="sort-btn active" data-sort="score">Priority</button>
+    <button class="sort-btn" data-sort="adr">ADR</button>
+    <button class="sort-btn" data-sort="proximity">PD Proximity</button>
+    <button class="sort-btn" data-sort="change">% Move</button>
+  </div>
+
+  <!-- Pair Grid -->
+  <div class="pair-grid" id="pair-grid">
+    <!-- Cards injected by JS -->
+    <div class="pair-card" style="opacity:0.4"><div class="skeleton" style="height:20px;margin-bottom:10px"></div><div class="skeleton" style="height:40px;margin-bottom:10px"></div><div class="skeleton"></div></div>
+    <div class="pair-card" style="opacity:0.4"><div class="skeleton" style="height:20px;margin-bottom:10px"></div><div class="skeleton" style="height:40px;margin-bottom:10px"></div><div class="skeleton"></div></div>
+    <div class="pair-card" style="opacity:0.4"><div class="skeleton" style="height:20px;margin-bottom:10px"></div><div class="skeleton" style="height:40px;margin-bottom:10px"></div><div class="skeleton"></div></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  // ── Inject Nav ──
+  document.getElementById('nav-placeholder').innerHTML = getNavHTML('watchlist');
+  startClock();
+
+  // ── State ──
+  let pairData = {};
+  let sortMode = 'score';
+  let refreshCountdown = 60;
+  let refreshTimer = null;
+
+  // ── Scoring ──
+  function scorePair(data) {
+    let score = 0;
+    const adrPct = data.adrPct || 0;
+    const proximity = data.proximity || 100;
+    const sessions = getActiveSessions();
+
+    // ADR contribution (max 40)
+    score += Math.min(adrPct * 3, 40);
+
+    // PD proximity contribution
+    if (proximity < 6)       score += 45;  // HOT
+    else if (proximity < 18) score += 20;  // WARM
+
+    // Session bonus (+10 if in active session)
+    const pair = PAIRS.find(p => p.symbol === data.symbol);
+    if (pair) {
+      if (sessions.tokyo   && pair.sessions.includes('tokyo'))   score += 10;
+      if (sessions.london  && pair.sessions.includes('london'))  score += 10;
+      if (sessions.newyork && pair.sessions.includes('newyork')) score += 10;
+    }
+    return Math.round(score);
+  }
+
+  function getProximityLabel(pct) {
+    if (pct < 6)  return 'hot';
+    if (pct < 18) return 'warm';
+    return 'cold';
+  }
+
+  function getTierClass(rank) {
+    if (rank === 1) return 'tier-1';
+    if (rank === 2) return 'tier-2';
+    if (rank === 3) return 'tier-3';
+    if (rank <= 5)  return 'tier-4';
+    return 'tier-5';
+  }
+
+  // ── Check if alert exists for pair ──
+  function pairHasAlert(symbol) {
+    const alerts = loadFromStorage('alerts') || [];
+    return alerts.some(a => a.symbol === symbol && a.status === 'pending');
+  }
+
+  // ── Render ──
+  function renderCards() {
+    const sessions = getActiveSessions();
+    const alerts = loadFromStorage('alerts') || [];
+
+    let sorted = Object.values(pairData);
+    if (sortMode === 'score')     sorted.sort((a,b) => b.score - a.score);
+    if (sortMode === 'adr')       sorted.sort((a,b) => b.adrPct - a.adrPct);
+    if (sortMode === 'proximity') sorted.sort((a,b) => a.proximity - b.proximity);
+    if (sortMode === 'change')    sorted.sort((a,b) => Math.abs(b.changePct) - Math.abs(a.changePct));
+
+    const grid = document.getElementById('pair-grid');
+    grid.innerHTML = sorted.map((d, i) => {
+      const rank = i + 1;
+      const tier = getTierClass(rank);
+      const prox = getProximityLabel(d.proximity);
+      const pair = PAIRS.find(p => p.symbol === d.symbol);
+      const hasAlert = pairHasAlert(d.symbol);
+      const changePct = parseFloat(d.changePct || 0);
+      const changeCls = changePct > 0 ? 'pos' : changePct < 0 ? 'neg' : 'neu';
+      const scoreWidth = Math.min(Math.round((d.score / 100) * 100), 100);
+
+      const sessionPips = pair ? pair.sessions.map(s => {
+        const active = sessions[s];
+        const label = s === 'tokyo' ? 'TYO' : s === 'london' ? 'LON' : 'NYC';
+        return `<span class="session-pip ${active ? 'active' : ''}">${label}</span>`;
+      }).join('') : '';
+
+      return `
+        <div class="pair-card ${tier}">
+          ${hasAlert ? '<div class="alert-dot" title="Alert active"></div>' : ''}
+          <div class="pair-card-top">
+            <div>
+              <div class="pair-symbol">${d.symbol}</div>
+              <div class="pair-name">${pair ? pair.name : ''}</div>
+            </div>
+            <div class="rank-badge">#${rank}</div>
+          </div>
+
+          <div class="pair-price-row">
+            <div class="pair-price">${d.price ? formatPrice(d.price, d.symbol) : '--'}</div>
+            <div class="change-badge ${changeCls}">${formatChange(d.change, d.changePct)}</div>
+          </div>
+
+          <div class="pair-metrics">
+            <div class="metric">
+              <div class="metric-label">ADR</div>
+              <div class="metric-value">${d.adr ? parseFloat(d.adr).toFixed(1) : '--'}</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">ADR%</div>
+              <div class="metric-value">${d.adrPct ? parseFloat(d.adrPct).toFixed(2) + '%' : '--'}</div>
+            </div>
+            <div class="metric">
+              <div class="metric-label">Score</div>
+              <div class="metric-value" style="color:var(--gold)">${d.score || '--'}</div>
+            </div>
+          </div>
+
+          <div class="score-bar-wrap">
+            <div class="score-bar-top">
+              <span class="score-bar-label">Priority</span>
+              <span class="score-bar-val">${d.score || 0}/100</span>
+            </div>
+            <div class="score-bar-track">
+              <div class="score-bar-fill" style="width:${scoreWidth}%"></div>
+            </div>
+          </div>
+
+          <div class="pd-row">
+            <span class="pd-label">PD Proximity</span>
+            <span class="pd-tag ${prox}">${prox.toUpperCase()} — ${d.proximity ? parseFloat(d.proximity).toFixed(1) + '%' : '--'}</span>
+          </div>
+
+          <div class="card-sessions">${sessionPips}</div>
+        </div>`;
+    }).join('');
+
+    // Update stats bar
+    const hot  = sorted.filter(d => getProximityLabel(d.proximity) === 'hot').length;
+    const warm = sorted.filter(d => getProximityLabel(d.proximity) === 'warm').length;
+    document.getElementById('stat-hot').textContent   = hot;
+    document.getElementById('stat-warm').textContent  = warm;
+    document.getElementById('stat-session').textContent = getSessionLabel();
+  }
+
+  // ── Fetch ──
+  async function fetchAll() {
+    const symbols = PAIRS.map(p => p.api).join(',');
+
+    try {
+      // Quote
+      const qRes = await fetch(
+        `https://api.twelvedata.com/quote?symbol=${symbols}&apikey=${API_KEY}`
+      );
+      const qData = await qRes.json();
+
+      // Time series for ADR (15 days)
+      const tsRes = await fetch(
+        `https://api.twelvedata.com/time_series?symbol=${symbols}&interval=1day&outputsize=16&apikey=${API_KEY}`
+      );
+      const tsData = await tsRes.json();
+
+      PAIRS.forEach(p => {
+        const q  = Array.isArray(qData) ? null : qData[p.api] || qData;
+        const ts = tsData[p.api] || tsData;
+
+        if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
+        const d = pairData[p.symbol];
+
+        if (q && q.price) {
+          d.price     = q.price;
+          d.change    = q.change;
+          d.changePct = q.percent_change;
+          d.high      = q.high;
+          d.low       = q.low;
+          d.close     = q.previous_close;
+        }
+
+        // ADR from time series
+        if (ts && ts.values && ts.values.length > 1) {
+          const days = ts.values.slice(1, 16); // skip today
+          if (days.length) {
+            const ranges = days.map(v => parseFloat(v.high) - parseFloat(v.low));
+            const adr = ranges.reduce((a,b) => a+b, 0) / ranges.length;
+            d.adr = adr;
+            d.adrPct = d.price ? (adr / parseFloat(d.price)) * 100 : 0;
+          }
+        }
+
+        // PD proximity
+        if (d.high && d.low && d.price) {
+          const price = parseFloat(d.price);
+          const high  = parseFloat(d.high);
+          const low   = parseFloat(d.low);
+          const range = high - low;
+          const distHigh = Math.abs(price - high);
+          const distLow  = Math.abs(price - low);
+          const minDist  = Math.min(distHigh, distLow);
+          d.proximity = range > 0 ? (minDist / range) * 100 : 100;
+        }
+
+        d.score = scorePair(d);
+      });
+
+      const now = new Date();
+      document.getElementById('last-updated').textContent =
+        'Last updated: ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      renderCards();
+
+    } catch(err) {
+      document.getElementById('last-updated').textContent = 'API error — retrying...';
+    }
+  }
+
+  // ── Sessions UI ──
+  function updateSessionUI() {
+    const s = getActiveSessions();
+    document.getElementById('sess-tokyo').classList.toggle('active', s.tokyo);
+    document.getElementById('sess-london').classList.toggle('active', s.london);
+    document.getElementById('sess-newyork').classList.toggle('active', s.newyork);
+  }
+
+  // ── Countdown ──
+  function startRefreshCycle() {
+    clearInterval(refreshTimer);
+    refreshCountdown = 60;
+    refreshTimer = setInterval(() => {
+      refreshCountdown--;
+      const el = document.getElementById('stat-refresh');
+      if (el) el.textContent = refreshCountdown + 's';
+      if (refreshCountdown <= 0) {
+        fetchAll();
+        updateSessionUI();
+        refreshCountdown = 60;
+      }
+    }, 1000);
+  }
+
+  // ── Sort buttons ──
+  document.querySelectorAll('.sort-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      sortMode = btn.dataset.sort;
+      renderCards();
+    });
+  });
+
+  // ── Init ──
+  updateSessionUI();
+  fetchAll();
+  startRefreshCycle();
+  setInterval(updateSessionUI, 60000);
+</script>
+</body>
+</html>
