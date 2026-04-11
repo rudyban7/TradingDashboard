@@ -207,72 +207,141 @@
     document.getElementById('stat-session').textContent = getSessionLabel();
   }
 
-  // ── Fetch ──
+  // ── ADR Cache (localStorage, 24h TTL) ──
+  const ADR_CACHE_KEY = 'adr_cache';
+  const ADR_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+  function loadADRCache() {
+    try {
+      const raw = localStorage.getItem(ADR_CACHE_KEY);
+      if (!raw) return null;
+      const { ts, data } = JSON.parse(raw);
+      if (Date.now() - ts > ADR_CACHE_TTL) return null;
+      return data;
+    } catch(e) { return null; }
+  }
+
+  function saveADRCache(data) {
+    try { localStorage.setItem(ADR_CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch(e) {}
+  }
+
+  // ── Fetch quotes in two batches to stay under rate limit ──
+  async function fetchQuotes(symbols) {
+    const res  = await fetch(`https://api.twelvedata.com/quote?symbol=${symbols}&apikey=${API_KEY}`);
+    const data = await res.json();
+    return data;
+  }
+
+  async function fetchTimeSeries(symbols) {
+    const res  = await fetch(`https://api.twelvedata.com/time_series?symbol=${symbols}&interval=1day&outputsize=16&apikey=${API_KEY}`);
+    const data = await res.json();
+    return data;
+  }
+
+  function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // ── Apply quote data to pairData ──
+  function applyQuotes(qData) {
+    PAIRS.forEach(p => {
+      const q = Array.isArray(qData) ? null : qData[p.api] || (Object.keys(qData).length && qData.price ? qData : null);
+      if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
+      const d = pairData[p.symbol];
+      if (q && q.price && !q.code) {
+        d.price     = q.price;
+        d.change    = q.change;
+        d.changePct = q.percent_change;
+        d.high      = q.high;
+        d.low       = q.low;
+        d.close     = q.previous_close;
+      }
+    });
+  }
+
+  // ── Apply ADR from time series ──
+  function applyADR(tsData, adrCache) {
+    PAIRS.forEach(p => {
+      if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
+      const d = pairData[p.symbol];
+
+      // Use cache if available
+      if (adrCache && adrCache[p.symbol]) {
+        d.adr    = adrCache[p.symbol].adr;
+        d.adrPct = d.price ? (d.adr / parseFloat(d.price)) * 100 : adrCache[p.symbol].adrPct;
+        return;
+      }
+
+      const ts = tsData ? (tsData[p.api] || tsData[p.symbol]) : null;
+      if (ts && ts.values && ts.values.length > 1 && !ts.code) {
+        const days   = ts.values.slice(1, 16);
+        const ranges = days.map(v => parseFloat(v.high) - parseFloat(v.low));
+        const adr    = ranges.reduce((a,b) => a+b, 0) / ranges.length;
+        d.adr        = adr;
+        d.adrPct     = d.price ? (adr / parseFloat(d.price)) * 100 : 0;
+      }
+    });
+  }
+
+  // ── Recalculate proximity & score for all pairs ──
+  function recalcAll() {
+    PAIRS.forEach(p => {
+      const d = pairData[p.symbol];
+      if (!d) return;
+      if (d.high && d.low && d.price) {
+        const price    = parseFloat(d.price);
+        const high     = parseFloat(d.high);
+        const low      = parseFloat(d.low);
+        const range    = high - low;
+        const minDist  = Math.min(Math.abs(price - high), Math.abs(price - low));
+        d.proximity    = range > 0 ? (minDist / range) * 100 : 100;
+      }
+      d.score = scorePair(d);
+    });
+  }
+
+  // ── Main fetch ──
   async function fetchAll() {
-    const symbols = PAIRS.map(p => p.api).join(',');
+    const batchA = PAIRS.slice(0, 5).map(p => p.api).join(',');
+    const batchB = PAIRS.slice(5).map(p => p.api).join(',');
 
     try {
-      // Quote
-      const qRes = await fetch(
-        `https://api.twelvedata.com/quote?symbol=${symbols}&apikey=${API_KEY}`
-      );
-      const qData = await qRes.json();
+      // Fetch quotes: batch A then batch B with a short gap
+      const [qA, qB] = await Promise.all([
+        fetchQuotes(batchA),
+        delay(8000).then(() => fetchQuotes(batchB))
+      ]);
+      applyQuotes(qA);
+      applyQuotes(qB);
 
-      // Time series for ADR (15 days)
-      const tsRes = await fetch(
-        `https://api.twelvedata.com/time_series?symbol=${symbols}&interval=1day&outputsize=16&apikey=${API_KEY}`
-      );
-      const tsData = await tsRes.json();
+      // ADR: use cache or fetch (heavy — only when cache is stale)
+      const adrCache = loadADRCache();
+      if (!adrCache) {
+        document.getElementById('last-updated').textContent = 'Fetching ADR data...';
+        const tsA = await fetchTimeSeries(batchA);
+        await delay(65000); // wait to reset rate limit window
+        const tsB = await fetchTimeSeries(batchB);
+        const combined = { ...tsA, ...tsB };
+        applyADR(combined, null);
 
-      PAIRS.forEach(p => {
-        const q  = Array.isArray(qData) ? null : qData[p.api] || qData;
-        const ts = tsData[p.api] || tsData;
+        // Build cache
+        const newCache = {};
+        PAIRS.forEach(p => {
+          const d = pairData[p.symbol];
+          if (d && d.adr) newCache[p.symbol] = { adr: d.adr, adrPct: d.adrPct };
+        });
+        saveADRCache(newCache);
+      } else {
+        applyADR(null, adrCache);
+      }
 
-        if (!pairData[p.symbol]) pairData[p.symbol] = { symbol: p.symbol };
-        const d = pairData[p.symbol];
-
-        if (q && q.price) {
-          d.price     = q.price;
-          d.change    = q.change;
-          d.changePct = q.percent_change;
-          d.high      = q.high;
-          d.low       = q.low;
-          d.close     = q.previous_close;
-        }
-
-        // ADR from time series
-        if (ts && ts.values && ts.values.length > 1) {
-          const days = ts.values.slice(1, 16); // skip today
-          if (days.length) {
-            const ranges = days.map(v => parseFloat(v.high) - parseFloat(v.low));
-            const adr = ranges.reduce((a,b) => a+b, 0) / ranges.length;
-            d.adr = adr;
-            d.adrPct = d.price ? (adr / parseFloat(d.price)) * 100 : 0;
-          }
-        }
-
-        // PD proximity
-        if (d.high && d.low && d.price) {
-          const price = parseFloat(d.price);
-          const high  = parseFloat(d.high);
-          const low   = parseFloat(d.low);
-          const range = high - low;
-          const distHigh = Math.abs(price - high);
-          const distLow  = Math.abs(price - low);
-          const minDist  = Math.min(distHigh, distLow);
-          d.proximity = range > 0 ? (minDist / range) * 100 : 100;
-        }
-
-        d.score = scorePair(d);
-      });
-
+      recalcAll();
       const now = new Date();
       document.getElementById('last-updated').textContent =
         'Last updated: ' + now.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
       renderCards();
 
     } catch(err) {
-      document.getElementById('last-updated').textContent = 'API error — retrying...';
+      document.getElementById('last-updated').textContent = 'API error — retrying in 60s';
+      renderCards();
     }
   }
 
