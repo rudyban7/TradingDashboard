@@ -3,7 +3,7 @@
 // Called as: /api/data (no params needed, symbols are hardcoded)
 const SYMBOLS = [
   'USDJPY=X', 'EURUSD=X', 'GBPUSD=X', 'XAUUSD=X', 'EURJPY=X',
-  '^GDAXI', '^N225', '^FTSE', '^GSPC'
+  '^GDAXI', '^N225', '^FTSE', '^GSPC', '^VIX'
 ];
 
 module.exports = async (req, res) => {
@@ -38,8 +38,9 @@ module.exports = async (req, res) => {
       high:      meta.regularMarketDayHigh  || null,
       low:       meta.regularMarketDayLow   || null,
       prevClose: prev,
-      highs:     quotes?.high  || [],
-      lows:      quotes?.low   || [],
+      highs:     quotes?.high   || [],
+      lows:      quotes?.low    || [],
+      closes:    quotes?.close  || [],
     };
   });
 

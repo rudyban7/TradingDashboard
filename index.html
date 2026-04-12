@@ -38,6 +38,14 @@
       <div class="stat-chip-value" style="color:var(--amber)" id="stat-warm">--</div>
     </div>
     <div class="stat-chip">
+      <div class="stat-chip-label">VIX</div>
+      <div class="stat-chip-value" id="stat-vix">--</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-chip-label">Volatility</div>
+      <div class="stat-chip-value" id="stat-vix-label" style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em">--</div>
+    </div>
+    <div class="stat-chip">
       <div class="stat-chip-label">Active Session</div>
       <div class="stat-chip-value gold" id="stat-session">--</div>
     </div>
@@ -171,8 +179,8 @@
               <div class="metric-value">${d.adr ? parseFloat(d.adr).toFixed(1) : '--'}</div>
             </div>
             <div class="metric">
-              <div class="metric-label">ADR%</div>
-              <div class="metric-value">${d.adrPct ? parseFloat(d.adrPct).toFixed(2) + '%' : '--'}</div>
+              <div class="metric-label">ATR(14)</div>
+              <div class="metric-value">${d.atr ? parseFloat(d.atr).toFixed(1) : '--'}</div>
             </div>
             <div class="metric">
               <div class="metric-label">Score</div>
@@ -218,6 +226,26 @@
     return res.json();
   }
 
+  // ── VIX helpers ──
+  function vixMeta(vix) {
+    if (vix < 12) return { label: 'CALM',     color: 'var(--green)' };
+    if (vix < 20) return { label: 'NORMAL',   color: 'var(--gold)' };
+    if (vix < 30) return { label: 'ELEVATED', color: 'var(--amber)' };
+    if (vix < 40) return { label: 'HIGH',     color: 'var(--red)' };
+    return             { label: 'EXTREME',  color: '#ff0055' };
+  }
+
+  function updateVIX(vix) {
+    const vEl = document.getElementById('stat-vix');
+    const lEl = document.getElementById('stat-vix-label');
+    if (!vEl || !lEl || !vix) return;
+    const m = vixMeta(vix);
+    vEl.textContent   = vix.toFixed(2);
+    vEl.style.color   = m.color;
+    lEl.textContent   = m.label;
+    lEl.style.color   = m.color;
+  }
+
   // ── Apply data to a pair ──
   function applyData(p, d) {
     if (!d || !d.price) return false;
@@ -230,15 +258,33 @@
     pd.low       = d.low;
     pd.close     = d.prevClose;
 
-    // Compute ADR from historical highs/lows (15 days)
-    const hs = (d.highs || []).filter(h => h != null);
-    const ls = (d.lows  || []).filter(l => l != null);
+    const hs = (d.highs   || []).filter(h => h != null);
+    const ls = (d.lows    || []).filter(l => l != null);
+    const cs = (d.closes  || []).filter(c => c != null);
+
+    // ADR — average high-low range over last 15 days
     if (hs.length > 1) {
-      const recent = Math.min(15, hs.length);
-      const ranges = hs.slice(-recent).map((h, i) => h - ls.slice(-recent)[i]);
-      const adr    = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+      const n   = Math.min(15, hs.length);
+      const adr = hs.slice(-n).reduce((sum, h, i) => sum + h - ls.slice(-n)[i], 0) / n;
       pd.adr    = adr;
       pd.adrPct = pd.price ? (adr / pd.price) * 100 : 0;
+    }
+
+    // ATR(14) — average true range over last 14 days
+    if (hs.length > 1 && cs.length > 1) {
+      const n   = Math.min(14, hs.length - 1);
+      const trs = [];
+      for (let i = 0; i < n; i++) {
+        const h  = hs[hs.length - 1 - i];
+        const l  = ls[ls.length - 1 - i];
+        const pc = cs[cs.length - 2 - i];
+        if (h == null || l == null || pc == null) continue;
+        trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+      }
+      if (trs.length) {
+        pd.atr    = trs.reduce((a, b) => a + b, 0) / trs.length;
+        pd.atrPct = pd.price ? (pd.atr / pd.price) * 100 : 0;
+      }
     }
     return true;
   }
@@ -272,6 +318,9 @@
       PAIRS.forEach(p => {
         if (applyData(p, data[p.yahoo])) loaded++;
       });
+
+      // VIX
+      if (data['^VIX']?.price) updateVIX(data['^VIX'].price);
 
       // Save prices to localStorage so alerts page can read them
       const livePrices = {};
