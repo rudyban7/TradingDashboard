@@ -131,6 +131,8 @@ function getNavHTML(activePage) {
         <span class="nav-icon">🔔</span><span>Alerts</span></a></li>
       <li><a href="stats.html" ${activePage==='stats'?'class="active"':''}>
         <span class="nav-icon">📈</span><span>Stats</span></a></li>
+      <li><a href="positions.html" ${activePage==='positions'?'class="active"':''}>
+        <span class="nav-icon">💼</span><span>Positions</span></a></li>
     </ul>
     <div class="nav-right">
       <div class="live-dot"></div>

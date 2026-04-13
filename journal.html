@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RB Trading | Journal</title>
   <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -13,144 +14,80 @@
 <div class="page">
   <div class="page-header">
     <div class="page-title">Trade Journal</div>
-    <div class="page-sub">Every trade logged. No excuses.</div>
+    <div class="page-sub" id="j-sub">Loading trade data...</div>
   </div>
 
-  <!-- Quick stats -->
-  <div class="stats-bar" id="journal-stats">
-    <div class="stat-chip">
-      <div class="stat-chip-label">Total Trades</div>
-      <div class="stat-chip-value" id="jstat-total">0</div>
+  <!-- Stats strip -->
+  <div class="live-strip" id="j-stats"></div>
+
+  <!-- Strategy equity curves -->
+  <div class="analytics-section">
+    <div class="analytics-title">
+      Strategy Performance
+      <div class="chart-toggle-grp" id="strat-tabs"></div>
     </div>
-    <div class="stat-chip">
-      <div class="stat-chip-label">Win Rate</div>
-      <div class="stat-chip-value green" id="jstat-wr">--%</div>
-    </div>
-    <div class="stat-chip">
-      <div class="stat-chip-label">Avg RR</div>
-      <div class="stat-chip-value gold" id="jstat-rr">--</div>
-    </div>
-    <div class="stat-chip">
-      <div class="stat-chip-label">Wins</div>
-      <div class="stat-chip-value green" id="jstat-wins">0</div>
-    </div>
-    <div class="stat-chip">
-      <div class="stat-chip-label">Losses</div>
-      <div class="stat-chip-value red" id="jstat-losses">0</div>
-    </div>
+    <div class="chart-wrap"><canvas id="j-chart"></canvas></div>
   </div>
 
-  <div class="two-col">
-    <!-- Left: Add Trade Form -->
-    <div class="panel">
-      <div class="panel-title">Log a Trade</div>
-
-      <div class="form-group">
-        <label class="form-label">Pair</label>
-        <select class="form-select" id="f-pair">
-          <option value="">Select pair...</option>
-        </select>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Direction</label>
-        <div class="toggle-group">
-          <button class="toggle-btn" id="btn-buy" onclick="setDir('BUY')">BUY</button>
-          <button class="toggle-btn" id="btn-sell" onclick="setDir('SELL')">SELL</button>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Date &amp; Time</label>
-        <input type="datetime-local" class="form-input" id="f-datetime" />
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">Entry</label>
-          <input type="number" step="any" class="form-input" id="f-entry" placeholder="1.08500" oninput="autoRR()" />
-        </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">Stop Loss</label>
-          <input type="number" step="any" class="form-input" id="f-sl" placeholder="1.08200" oninput="autoRR()" />
-        </div>
-      </div>
-      <div style="height:10px"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">Take Profit</label>
-          <input type="number" step="any" class="form-input" id="f-tp" placeholder="1.09100" oninput="autoRR()" />
-        </div>
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">RR (auto)</label>
-          <input type="text" class="form-input" id="f-rr" placeholder="--" readonly style="color:var(--gold);font-family:'Space Mono',monospace" />
-        </div>
-      </div>
-
-      <div style="height:14px"></div>
-
-      <div class="form-group">
-        <label class="form-label">Result</label>
-        <div class="result-group">
-          <button class="result-btn" id="res-win"  onclick="setResult('WIN')">WIN</button>
-          <button class="result-btn" id="res-loss" onclick="setResult('LOSS')">LOSS</button>
-          <button class="result-btn" id="res-be"   onclick="setResult('BE')">B/E</button>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Notes</label>
-        <textarea class="form-textarea" id="f-notes" placeholder="Entry reason, mistakes, what went well..."></textarea>
-      </div>
-
-      <button class="btn btn-primary btn-full" onclick="submitTrade()">Log Trade</button>
-      <div id="form-msg" style="font-size:0.75rem;margin-top:8px;text-align:center;color:var(--green);min-height:18px"></div>
+  <!-- Toolbar -->
+  <div class="j-toolbar">
+    <div class="j-filters">
+      <select class="j-filter" id="jf-strat"  onchange="applyFilters()"><option value="">All Strategies</option></select>
+      <select class="j-filter" id="jf-pair"   onchange="applyFilters()"><option value="">All Pairs</option></select>
+      <select class="j-filter" id="jf-status" onchange="applyFilters()">
+        <option value="">Open + Closed</option>
+        <option value="OPEN">Open Only</option>
+        <option value="CLOSED">Closed Only</option>
+      </select>
+      <select class="j-filter" id="jf-rating" onchange="applyFilters()">
+        <option value="">All Ratings</option>
+        <option value="A">A — Perfect</option>
+        <option value="B">B — Good</option>
+        <option value="C">C — Poor</option>
+      </select>
     </div>
+    <button class="btn-gold-sm" onclick="openNewModal()">+ New Trade</button>
+  </div>
 
-    <!-- Right: Trades Table -->
-    <div>
-      <!-- Filters -->
-      <div class="filter-row">
-        <select class="form-select" id="filter-pair" onchange="renderTable()" style="min-width:130px">
-          <option value="">All Pairs</option>
-        </select>
-        <select class="form-select" id="filter-result" onchange="renderTable()">
-          <option value="">All Results</option>
-          <option value="WIN">Wins</option>
-          <option value="LOSS">Losses</option>
-          <option value="BE">Breakeven</option>
-        </select>
-        <select class="form-select" id="filter-dir" onchange="renderTable()">
-          <option value="">All Directions</option>
-          <option value="BUY">Buys</option>
-          <option value="SELL">Sells</option>
-        </select>
-      </div>
+  <!-- Journal list -->
+  <div id="j-list" class="j-list"></div>
+</div>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Pair</th>
-              <th>Dir</th>
-              <th>Entry</th>
-              <th>SL</th>
-              <th>TP</th>
-              <th>RR</th>
-              <th>Result</th>
-              <th>Notes</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="trade-tbody"></tbody>
-        </table>
+<!-- Manual entry modal -->
+<div id="j-overlay" class="j-modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="j-modal">
+    <h3>Log Manual Trade</h3>
+    <div class="j-form-row">
+      <div><div class="j-form-lbl">Pair</div><select class="j-form-inp" id="mf-pair"><option value="">Select...</option></select></div>
+      <div><div class="j-form-lbl">Direction</div><select class="j-form-inp" id="mf-dir"><option value="buy">Buy</option><option value="sell">Sell</option></select></div>
+    </div>
+    <div class="j-form-row">
+      <div><div class="j-form-lbl">Strategy</div><select class="j-form-inp" id="mf-strat"></select></div>
+      <div><div class="j-form-lbl">Rating</div>
+        <select class="j-form-inp" id="mf-rating">
+          <option value="">--</option><option value="A">A — Perfect</option><option value="B">B — Good</option><option value="C">C — Poor</option>
+        </select>
       </div>
-      <div id="table-empty" class="empty-state" style="display:none">
-        <div class="empty-state-icon">📒</div>
-        <div class="empty-state-title">No trades logged yet</div>
-        <div class="empty-state-sub">Use the form to log your first trade</div>
-      </div>
+    </div>
+    <div class="j-form-row">
+      <div><div class="j-form-lbl">Open Time</div><input type="datetime-local" class="j-form-inp" id="mf-open-time" /></div>
+      <div><div class="j-form-lbl">Close Time</div><input type="datetime-local" class="j-form-inp" id="mf-close-time" /></div>
+    </div>
+    <div class="j-form-row">
+      <div><div class="j-form-lbl">Entry Price</div><input type="number" step="any" class="j-form-inp" id="mf-entry" placeholder="0.00000" /></div>
+      <div><div class="j-form-lbl">Exit Price</div><input type="number" step="any" class="j-form-inp" id="mf-exit" placeholder="0.00000" /></div>
+    </div>
+    <div class="j-form-row">
+      <div><div class="j-form-lbl">P&amp;L ($)</div><input type="number" step="any" class="j-form-inp" id="mf-pnl" placeholder="0.00" /></div>
+      <div><div class="j-form-lbl">Risk ($)</div><input type="number" step="any" class="j-form-inp" id="mf-risk" placeholder="1000" /></div>
+    </div>
+    <div class="j-form-full">
+      <div class="j-form-lbl">Notes</div>
+      <textarea class="j-notes" id="mf-notes" placeholder="Setup, entry reason, execution, what you learned..."></textarea>
+    </div>
+    <div class="j-modal-actions">
+      <button class="btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn-gold-sm" onclick="saveManualTrade()">Save Trade</button>
     </div>
   </div>
 </div>
@@ -160,165 +97,538 @@
   document.getElementById('nav-placeholder').innerHTML = getNavHTML('journal');
   startClock();
 
-  let direction = '';
-  let result = '';
-  let trades = loadFromStorage('trades') || [];
+  const API_BASE = location.protocol === 'file:'
+    ? 'https://trading-dashboard-rosy.vercel.app' : '';
 
-  // ── Populate pair dropdowns ──
-  function populatePairDropdowns() {
-    const opts = PAIRS.map(p => `<option value="${p.symbol}">${p.symbol}</option>`).join('');
-    document.getElementById('f-pair').innerHTML = '<option value="">Select pair...</option>' + opts;
-    document.getElementById('filter-pair').innerHTML = '<option value="">All Pairs</option>' + opts;
+  // ── Strategies ──
+  const DEFAULT_STRATEGIES = [
+    { code:'DSE',    name:'Discretionary ICT', color:'#f0b429' },
+    { code:'BOT4H',  name:'4H Bot',             color:'#06b6d4' },
+    { code:'Manual', name:'Manual',              color:'#94a3b8' },
+  ];
+  function getStrategies() {
+    try { const s = localStorage.getItem('td_strategies'); return s ? JSON.parse(s) : DEFAULT_STRATEGIES; }
+    catch { return DEFAULT_STRATEGIES; }
+  }
+  const STRATEGIES = getStrategies();
+  const STRAT_MAP  = Object.fromEntries(STRATEGIES.map(s => [s.code, s]));
+
+  // ── Symbol normaliser ──
+  const SYM_MAP = {
+    EURUSD:'EUR/USD',GBPUSD:'GBP/USD',USDJPY:'USD/JPY',XAUUSD:'XAU/USD',
+    EURJPY:'EUR/JPY',GBPJPY:'GBP/JPY',AUDUSD:'AUD/USD',USDCAD:'USD/CAD',
+    USDCHF:'USD/CHF',NZDUSD:'NZD/USD',EURGBP:'EUR/GBP',EURAUD:'EUR/AUD',
+    GBPAUD:'GBP/AUD',AUDNZD:'AUD/NZD',XAGUSD:'XAG/USD',
+  };
+  function normSym(s) {
+    const u = (s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    return SYM_MAP[u] || SYM_MAP[u.slice(0,6)] || s;
   }
 
-  // ── Set default datetime ──
-  function setDefaultDatetime() {
-    const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    document.getElementById('f-datetime').value = local.toISOString().slice(0,16);
+  // ── Journal metadata (localStorage) ──
+  function loadMeta(id) {
+    try { const r = localStorage.getItem('td_jmeta_'+id); return r ? JSON.parse(r) : {}; } catch { return {}; }
+  }
+  function saveMeta(id, updates) {
+    const e = loadMeta(id);
+    localStorage.setItem('td_jmeta_'+id, JSON.stringify({...e,...updates}));
   }
 
-  // ── Direction toggle ──
-  function setDir(d) {
-    direction = d;
-    document.getElementById('btn-buy').className  = 'toggle-btn' + (d === 'BUY'  ? ' active-buy'  : '');
-    document.getElementById('btn-sell').className = 'toggle-btn' + (d === 'SELL' ? ' active-sell' : '');
+  // ── Parse strategy from MT5 comment ──
+  function parseStrategy(comment) {
+    if (!comment) return null;
+    const u = comment.toUpperCase();
+    for (const s of STRATEGIES) {
+      if (s.code === 'Manual') continue;
+      if (u.includes(s.code)) return s.code;
+    }
+    return null;
   }
 
-  // ── Result toggle ──
-  function setResult(r) {
-    result = r;
-    document.getElementById('res-win').className  = 'result-btn' + (r === 'WIN'  ? ' active-win'  : '');
-    document.getElementById('res-loss').className = 'result-btn' + (r === 'LOSS' ? ' active-loss' : '');
-    document.getElementById('res-be').className   = 'result-btn' + (r === 'BE'   ? ' active-be'   : '');
-  }
+  // ── Default risk ──
+  function defaultRisk() { return parseFloat(localStorage.getItem('td_risk') || '1000'); }
 
-  // ── Auto RR ──
-  function autoRR() {
-    const entry = document.getElementById('f-entry').value;
-    const sl    = document.getElementById('f-sl').value;
-    const tp    = document.getElementById('f-tp').value;
-    const rr    = calcRR(entry, sl, tp, direction);
-    document.getElementById('f-rr').value = rr ? '1:' + rr : '--';
-  }
-
-  // ── Submit ──
-  function submitTrade() {
-    const pair     = document.getElementById('f-pair').value;
-    const datetime = document.getElementById('f-datetime').value;
-    const entry    = document.getElementById('f-entry').value;
-    const sl       = document.getElementById('f-sl').value;
-    const tp       = document.getElementById('f-tp').value;
-    const notes    = document.getElementById('f-notes').value.trim();
-    const msg      = document.getElementById('form-msg');
-
-    if (!pair)      { msg.textContent = 'Select a pair.'; msg.style.color = 'var(--red)'; return; }
-    if (!direction) { msg.textContent = 'Choose BUY or SELL.'; msg.style.color = 'var(--red)'; return; }
-    if (!result)    { msg.textContent = 'Select a result.'; msg.style.color = 'var(--red)'; return; }
-    if (!entry)     { msg.textContent = 'Enter your entry price.'; msg.style.color = 'var(--red)'; return; }
-
-    const rr = calcRR(entry, sl, tp, direction);
-
-    const trade = {
-      id: generateId(),
-      datetime: datetime || new Date().toISOString(),
-      pair,
-      direction,
-      entry: parseFloat(entry),
-      sl:    sl ? parseFloat(sl) : null,
-      tp:    tp ? parseFloat(tp) : null,
-      rr:    rr ? parseFloat(rr) : null,
-      result,
-      notes,
+  // ── Build entry from MT5 closed deal ──
+  function dealToEntry(d) {
+    const meta    = loadMeta(String(d.ticket));
+    const netUSD  = parseFloat(((d.profit||0)+(d.swap||0)+(d.commission||0)).toFixed(2));
+    const risk    = meta.risk || d.riskUSD || defaultRisk();
+    const pnlR    = risk > 0 ? parseFloat((netUSD/risk).toFixed(2)) : 0;
+    const closeTs = (d.closeTime||d.time||0)*1000;
+    const closeDate = new Date(closeTs).toISOString().slice(0,10);
+    return {
+      id: String(d.ticket), source:'mt5', status:'CLOSED',
+      symbol: normSym(d.symbol), dir: d.dir,
+      strategy: meta.strategy || parseStrategy(d.comment) || 'Manual',
+      volume: d.volume, openPrice: d.openPrice||0, closePrice: d.closePrice||d.price||0,
+      slPrice: d.slPrice||0, pnlUSD: netUSD, pnlR, riskUSD: risk,
+      swap: d.swap||0, commission: d.commission||0,
+      openTime: (d.openTime||0)*1000, closeTime: closeTs,
+      date: closeDate, month: closeDate.slice(0,7),
+      comment: d.comment||'', notes: meta.notes||'', rating: meta.rating||'',
     };
-
-    trades.unshift(trade);
-    saveToStorage('trades', trades);
-    msg.textContent = 'Trade logged ✓';
-    msg.style.color = 'var(--green)';
-    setTimeout(() => msg.textContent = '', 2500);
-
-    // Reset form
-    document.getElementById('f-pair').value = '';
-    document.getElementById('f-entry').value = '';
-    document.getElementById('f-sl').value = '';
-    document.getElementById('f-tp').value = '';
-    document.getElementById('f-rr').value = '';
-    document.getElementById('f-notes').value = '';
-    setDir('');
-    setResult('');
-    setDefaultDatetime();
-
-    renderTable();
-    updateStats();
   }
 
-  // ── Delete trade ──
-  function deleteTrade(id) {
-    trades = trades.filter(t => t.id !== id);
-    saveToStorage('trades', trades);
-    renderTable();
-    updateStats();
+  // ── Build entry from open MT5 position ──
+  function posToEntry(p) {
+    const meta = loadMeta('pos_'+p.ticket);
+    const openDate = new Date((p.openTime||0)*1000).toISOString().slice(0,10);
+    return {
+      id:'pos_'+p.ticket, source:'mt5_open', status:'OPEN',
+      symbol: normSym(p.symbol), dir: p.type===0?'buy':'sell',
+      strategy: meta.strategy || parseStrategy(p.comment) || 'Manual',
+      volume: p.volume, openPrice: p.openPrice, closePrice: p.currentPrice,
+      slPrice: p.sl||0, pnlUSD: (p.profit||0)+(p.swap||0), pnlR: 0,
+      riskUSD: meta.risk||0, swap: p.swap||0, commission: 0,
+      openTime: (p.openTime||0)*1000, closeTime: 0,
+      date: openDate, month: openDate.slice(0,7),
+      comment: p.comment||'', notes: meta.notes||'', rating: meta.rating||'',
+    };
   }
 
-  // ── Render table ──
-  function renderTable() {
-    const fPair   = document.getElementById('filter-pair').value;
-    const fResult = document.getElementById('filter-result').value;
-    const fDir    = document.getElementById('filter-dir').value;
+  // ── Build entry from old localStorage manual trade ──
+  function legacyToEntry(t) {
+    const meta = loadMeta('m_'+t.id);
+    const netUSD = t.pnlUSD || 0;
+    const risk = meta.risk || t.risk || defaultRisk();
+    const closeDate = (t.datetime||'').slice(0,10) || new Date().toISOString().slice(0,10);
+    return {
+      id:'m_'+t.id, source:'manual', status:'CLOSED',
+      symbol: t.pair||t.symbol||'', dir: (t.direction||t.dir||'buy').toLowerCase(),
+      strategy: meta.strategy||t.strategy||'Manual',
+      volume: t.volume||0, openPrice: t.entry||0, closePrice: t.exit||0,
+      slPrice: t.sl||0, pnlUSD: netUSD,
+      pnlR: risk>0 ? parseFloat((netUSD/risk).toFixed(2)) : (t.rr||0),
+      riskUSD: risk, swap:0, commission:0,
+      openTime: t.datetime ? new Date(t.datetime).getTime() : 0, closeTime:0,
+      date: closeDate, month: closeDate.slice(0,7),
+      comment:'', notes: meta.notes||t.notes||'', rating: meta.rating||'',
+    };
+  }
 
-    let filtered = trades.slice();
-    if (fPair)   filtered = filtered.filter(t => t.pair      === fPair);
-    if (fResult) filtered = filtered.filter(t => t.result    === fResult);
-    if (fDir)    filtered = filtered.filter(t => t.direction === fDir);
+  // ── Data ──
+  let JOURNAL = [];
+  let stratChartInst = null;
+  let activeStratTab = 'all';
+  let expandedIds = new Set();
 
-    const tbody = document.getElementById('trade-tbody');
-    const empty = document.getElementById('table-empty');
+  // ── Load everything ──
+  async function loadJournal() {
+    let deals = [], positions = [];
+    try {
+      const r = await fetch(`${API_BASE}/api/mt5/deals`);
+      const j = await r.json();
+      deals = (j.deals||[]).map(dealToEntry);
+    } catch {}
+    try {
+      const r = await fetch(`${API_BASE}/api/mt5/state`);
+      const j = await r.json();
+      let data = j?.data;
+      if (typeof data==='string') { try{data=JSON.parse(data);}catch{} }
+      if (data?.positions) positions = data.positions.map(posToEntry);
+    } catch {}
 
-    if (!filtered.length) {
-      tbody.innerHTML = '';
-      empty.style.display = 'block';
+    const legacy = (loadFromStorage('trades')||[]).map(legacyToEntry)
+                    .filter(m => !deals.find(d => d.id===m.id));
+
+    JOURNAL = [
+      ...positions,
+      ...deals.sort((a,b) => b.closeTime-a.closeTime),
+      ...legacy,
+    ];
+
+    const closed = JOURNAL.filter(e=>e.status==='CLOSED').length;
+    document.getElementById('j-sub').textContent =
+      `${closed} closed trade${closed!==1?'s':''} · ${positions.length} open`;
+
+    renderStats(JOURNAL);
+    renderStratTabs();
+    renderStratChart(JOURNAL);
+    populateFilters();
+    renderList(filtered());
+  }
+
+  // ── Stats strip ──
+  function renderStats(entries) {
+    const closed  = entries.filter(e=>e.status==='CLOSED');
+    const wins    = closed.filter(e=>e.pnlUSD>0);
+    const total   = closed.length;
+    const totalPnl= closed.reduce((s,e)=>s+e.pnlUSD,0);
+    const wr      = total?(wins.length/total*100).toFixed(0):'--';
+    const avgR    = total?(closed.reduce((s,e)=>s+e.pnlR,0)/total).toFixed(2):'--';
+    const sign    = v => v>=0?'+$':'-$';
+    document.getElementById('j-stats').innerHTML = `
+      <div class="live-status-dot"></div>
+      <div class="live-chip"><div class="live-chip-lbl">Trades</div><div class="live-chip-val gold">${total}</div></div>
+      <div class="live-chip"><div class="live-chip-lbl">Win Rate</div><div class="live-chip-val ${parseFloat(wr)>=50?'pos':'neg'}">${wr==='--'?'--':wr+'%'}</div></div>
+      <div class="live-chip"><div class="live-chip-lbl">Total P&L</div><div class="live-chip-val ${totalPnl>=0?'pos':'neg'}">${sign(totalPnl)}${Math.abs(totalPnl).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="live-chip"><div class="live-chip-lbl">Avg R</div><div class="live-chip-val ${parseFloat(avgR)>=0?'pos':'neg'}">${avgR}R</div></div>
+      <div class="live-chip"><div class="live-chip-lbl">Open</div><div class="live-chip-val gold">${entries.filter(e=>e.status==='OPEN').length}</div></div>
+    `;
+  }
+
+  // ── Strategy tabs ──
+  function renderStratTabs() {
+    const tabs = [{code:'all',name:'All',color:'#f0b429'}, ...STRATEGIES.filter(s=>s.code!=='Manual')];
+    document.getElementById('strat-tabs').innerHTML = tabs.map(s => {
+      const active = activeStratTab===s.code;
+      return `<button class="chart-tog ${active?'active':''}" data-strat="${s.code}"
+        style="${active?`background:${s.color};color:#0d1520;border-color:${s.color}`:`border-color:${s.color}55;color:${s.color}`}"
+        onclick="setStratTab('${s.code}')">${s.name}</button>`;
+    }).join('');
+  }
+
+  function setStratTab(code) {
+    activeStratTab = code;
+    renderStratTabs();
+    renderStratChart(JOURNAL);
+  }
+
+  // ── Strategy equity chart ──
+  Chart.defaults.color = '#94a3b8';
+  Chart.defaults.borderColor = '#1e2a3a';
+  Chart.defaults.font.family = "'Space Mono', monospace";
+
+  function renderStratChart(entries) {
+    const ctx = document.getElementById('j-chart').getContext('2d');
+    if (stratChartInst) { stratChartInst.destroy(); stratChartInst = null; }
+
+    const closed = entries.filter(e=>e.status==='CLOSED');
+    let datasets = [];
+
+    if (activeStratTab === 'all') {
+      // One line per strategy that has trades
+      STRATEGIES.forEach(s => {
+        const trades = closed.filter(e=>e.strategy===s.code).sort((a,b)=>a.closeTime-b.closeTime);
+        if (!trades.length) return;
+        let cum = 0;
+        const pts = [{x:trades[0].date,y:0},...trades.map(e=>{cum+=e.pnlUSD;return{x:e.date,y:parseFloat(cum.toFixed(2))};})];
+        datasets.push({
+          label:s.name, data:pts,
+          borderColor:s.color, backgroundColor:s.color+'18',
+          pointRadius:0, borderWidth:2, tension:0.3,
+          fill:{target:'origin',above:s.color+'18',below:'rgba(239,68,68,0.12)'},
+        });
+      });
+    } else {
+      const s = STRAT_MAP[activeStratTab];
+      if (!s) return;
+      const trades = closed.filter(e=>e.strategy===s.code).sort((a,b)=>a.closeTime-b.closeTime);
+      if (!trades.length) return;
+      let cum = 0;
+      const pts = [{x:trades[0].date,y:0},...trades.map(e=>{cum+=e.pnlUSD;return{x:e.date,y:parseFloat(cum.toFixed(2))};})];
+      datasets.push({
+        label:s.name, data:pts,
+        borderColor:s.color, backgroundColor:s.color+'18',
+        pointRadius:0, borderWidth:2, tension:0.3,
+        fill:{target:'origin',above:s.color+'18',below:'rgba(239,68,68,0.12)'},
+      });
+    }
+
+    if (!datasets.length) return;
+    const CJ_TICK = {color:'#94a3b8',font:{size:10}};
+
+    stratChartInst = new Chart(ctx, {
+      type:'line', data:{datasets},
+      options:{
+        responsive:true, maintainAspectRatio:false, parsing:false,
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{display:datasets.length>1,position:'top',labels:{boxWidth:12,font:{size:10}}},
+          tooltip:{callbacks:{label:c=>{const v=c.raw.y;return`${c.dataset.label}: ${v>=0?'+$':'-$'}${Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2})}`;}}},
+        },
+        scales:{
+          x:{type:'category',grid:{color:'#1e2a3a'},ticks:{...CJ_TICK,maxTicksLimit:10,maxRotation:0}},
+          y:{grid:{color:'#1e2a3a'},ticks:{...CJ_TICK,callback:v=>`${v>=0?'':'-'}$${(Math.abs(v)/1000).toFixed(1)}k`}},
+        },
+      },
+    });
+  }
+
+  // ── Filter helpers ──
+  function filtered() {
+    const fStrat  = document.getElementById('jf-strat')?.value  || '';
+    const fPair   = document.getElementById('jf-pair')?.value   || '';
+    const fStatus = document.getElementById('jf-status')?.value || '';
+    const fRating = document.getElementById('jf-rating')?.value || '';
+    return JOURNAL
+      .filter(e => !fStrat  || e.strategy===fStrat)
+      .filter(e => !fPair   || e.symbol===fPair)
+      .filter(e => !fStatus || e.status===fStatus)
+      .filter(e => !fRating || e.rating===fRating);
+  }
+  function applyFilters() { renderList(filtered()); }
+
+  function populateFilters() {
+    const stratSel = document.getElementById('jf-strat');
+    stratSel.innerHTML = `<option value="">All Strategies</option>`+
+      STRATEGIES.map(s=>`<option value="${s.code}">${s.name}</option>`).join('');
+    const pairs = [...new Set(JOURNAL.map(e=>e.symbol).filter(Boolean))].sort();
+    document.getElementById('jf-pair').innerHTML = `<option value="">All Pairs</option>`+
+      pairs.map(p=>`<option value="${p}">${p}</option>`).join('');
+  }
+
+  // ── Render list ──
+  function renderList(entries) {
+    const el = document.getElementById('j-list');
+    if (!entries.length) {
+      el.innerHTML = `<div style="color:var(--text-3);text-align:center;padding:3rem 0">No trades found — make sure the MT5 EA is running and has pushed at least one deal, or add a manual trade.</div>`;
       return;
     }
-    empty.style.display = 'none';
-
-    tbody.innerHTML = filtered.map(t => `
-      <tr>
-        <td class="mono" style="font-size:0.72rem;color:var(--text-2)">${formatDateTime(t.datetime)}</td>
-        <td><span style="font-family:'Space Mono',monospace;font-weight:700;font-size:0.82rem">${t.pair}</span></td>
-        <td><span class="badge badge-${t.direction.toLowerCase()}">${t.direction}</span></td>
-        <td class="mono">${t.entry}</td>
-        <td class="mono" style="color:var(--text-2)">${t.sl || '--'}</td>
-        <td class="mono" style="color:var(--text-2)">${t.tp || '--'}</td>
-        <td class="mono" style="color:var(--gold)">${t.rr ? '1:'+t.rr : '--'}</td>
-        <td><span class="badge badge-${t.result === 'WIN' ? 'win' : t.result === 'LOSS' ? 'loss' : 'be'}">${t.result}</span></td>
-        <td style="color:var(--text-2);font-size:0.75rem;max-width:160px;overflow:hidden;text-overflow:ellipsis">${t.notes || '--'}</td>
-        <td><button class="btn btn-danger btn-sm" onclick="deleteTrade('${t.id}')">✕</button></td>
-      </tr>
-    `).join('');
+    el.innerHTML = entries.map(e => renderEntry(e)).join('');
+    // Restore expanded state
+    expandedIds.forEach(id => {
+      const d = document.getElementById('jd-'+id);
+      const en = document.getElementById('je-'+id);
+      if (d) { d.style.display='block'; en?.classList.add('expanded'); }
+    });
   }
 
-  // ── Update summary stats ──
-  function updateStats() {
-    const total  = trades.length;
-    const wins   = trades.filter(t => t.result === 'WIN').length;
-    const losses = trades.filter(t => t.result === 'LOSS').length;
-    const wr     = total > 0 ? ((wins / total) * 100).toFixed(0) : '--';
-    const rrArr  = trades.filter(t => t.rr).map(t => t.rr);
-    const avgRR  = rrArr.length ? (rrArr.reduce((a,b) => a+b, 0) / rrArr.length).toFixed(2) : '--';
+  function stratBadge(code) {
+    const s = STRAT_MAP[code] || {name:code,color:'#94a3b8'};
+    return `<span class="strat-badge" style="background:${s.color}22;color:${s.color};border:1px solid ${s.color}44">${s.code||code}</span>`;
+  }
 
-    document.getElementById('jstat-total').textContent  = total;
-    document.getElementById('jstat-wr').textContent     = total > 0 ? wr + '%' : '--%';
-    document.getElementById('jstat-rr').textContent     = avgRR !== '--' ? '1:' + avgRR : '--';
-    document.getElementById('jstat-wins').textContent   = wins;
-    document.getElementById('jstat-losses').textContent = losses;
+  function duration(openMs, closeMs) {
+    if (!openMs||!closeMs) return '--';
+    const diff = Math.abs(closeMs-openMs);
+    const h = Math.floor(diff/3600000), m = Math.floor((diff%3600000)/60000);
+    if (h>48) return `${Math.floor(h/24)}d ${h%24}h`;
+    if (h>0)  return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+
+  function renderEntry(e) {
+    const isOpen   = e.status==='OPEN';
+    const pnlColor = e.pnlUSD>=0?'var(--green)':'var(--red)';
+    const dotCls   = isOpen?'open':(e.pnlUSD>=0?'closed-pos':'closed-neg');
+    const pnlStr   = isOpen ? (e.pnlUSD>=0?'+$':'-$')+Math.abs(e.pnlUSD).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : (e.pnlUSD>=0?'+$':'-$')+Math.abs(e.pnlUSD).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const rStr     = isOpen ? 'OPEN' : `${e.pnlR>=0?'+':''}${e.pnlR.toFixed(2)}R`;
+    const rColor   = isOpen ? 'var(--gold)' : (e.pnlR>=0?'var(--green)':'var(--red)');
+    const timeStr  = e.openTime ? new Date(e.openTime).toLocaleDateString('en-GB',{day:'2-digit',month:'short'})+' '+new Date(e.openTime).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) : '--';
+    const ratingEl = e.rating ? `<span class="rating-btn active-${e.rating}" style="pointer-events:none">${e.rating}</span>` : '';
+    const notesPrev = e.notes ? `<span style="color:var(--text-3);font-size:.7rem;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">${e.notes.slice(0,50)}${e.notes.length>50?'…':''}</span>` : '';
+
+    return `<div class="j-entry${isOpen?' j-open':''}" id="je-${e.id}" onclick="toggleEntry('${e.id}')">
+      <div class="j-row">
+        <div class="j-status-dot ${dotCls}"></div>
+        <div class="mono" style="font-size:.72rem;color:var(--text-2);white-space:nowrap">${timeStr}</div>
+        <div class="mono" style="font-weight:700;font-size:.82rem">${e.symbol}</div>
+        <span class="badge badge-${e.dir}">${e.dir.toUpperCase()}</span>
+        ${stratBadge(e.strategy)}
+        <div style="color:var(--text-3);font-size:.72rem">${isOpen?'<span style="color:var(--gold)">LIVE</span>':duration(e.openTime,e.closeTime)}</div>
+        <div style="color:${pnlColor};font-family:\'Space Mono\',monospace;font-size:.82rem;font-weight:700">${pnlStr}</div>
+        <div style="color:${rColor};font-family:\'Space Mono\',monospace;font-size:.78rem">${rStr}</div>
+        <div>${ratingEl}</div>
+        ${notesPrev}
+        <div style="color:var(--text-3);margin-left:auto">›</div>
+      </div>
+      <div class="j-detail" id="jd-${e.id}" style="display:none" onclick="event.stopPropagation()">
+        ${renderDetail(e)}
+      </div>
+    </div>`;
+  }
+
+  function renderDetail(e) {
+    const id = e.id;
+    const fmt = (n,d=5) => (n&&n!==0) ? parseFloat(n).toFixed(d) : '--';
+    const fmtT = ms => ms ? new Date(ms).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '--';
+    const fmtU = n => n!=null ? `${n>=0?'+$':'-$'}${Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2})}` : '--';
+    const stratOpts = STRATEGIES.map(s=>`<option value="${s.code}"${e.strategy===s.code?' selected':''}>${s.name}</option>`).join('');
+
+    return `<div class="j-detail-grid">
+        <div class="j-detail-item"><div class="j-detail-lbl">Open Time</div><div class="j-detail-val">${fmtT(e.openTime)}</div></div>
+        <div class="j-detail-item"><div class="j-detail-lbl">Close Time</div><div class="j-detail-val">${fmtT(e.closeTime)}</div></div>
+        <div class="j-detail-item"><div class="j-detail-lbl">Open Price</div><div class="j-detail-val">${fmt(e.openPrice)}</div></div>
+        <div class="j-detail-item"><div class="j-detail-lbl">Close Price</div><div class="j-detail-val">${fmt(e.closePrice)}</div></div>
+        <div class="j-detail-item"><div class="j-detail-lbl">SL</div><div class="j-detail-val">${fmt(e.slPrice)}</div></div>
+        <div class="j-detail-item"><div class="j-detail-lbl">Volume (Lots)</div><div class="j-detail-val">${e.volume||'--'}</div></div>
+        <div class="j-detail-item"><div class="j-detail-lbl">P&L</div><div class="j-detail-val" style="color:${e.pnlUSD>=0?'var(--green)':'var(--red)'}">${fmtU(e.pnlUSD)}</div></div>
+        <div class="j-detail-item"><div class="j-detail-lbl">Swap</div><div class="j-detail-val">${fmtU(e.swap)}</div></div>
+        <div class="j-detail-item"><div class="j-detail-lbl">Commission</div><div class="j-detail-val">${fmtU(e.commission)}</div></div>
+        <div class="j-detail-item"><div class="j-detail-lbl">Risk Used ($)</div><div class="j-detail-val" style="color:var(--gold)">${e.riskUSD?'$'+parseFloat(e.riskUSD).toLocaleString('en-US',{minimumFractionDigits:2}):'--'}</div></div>
+        ${e.comment?`<div class="j-detail-item" style="grid-column:1/-1"><div class="j-detail-lbl">MT5 Comment</div><div class="j-detail-val" style="color:var(--text-2)">${e.comment}</div></div>`:''}
+      </div>
+      <div class="j-edit-row">
+        <div>
+          <div class="j-form-lbl">Strategy</div>
+          <select class="j-strat-sel" onchange="updateMeta('${id}','strategy',this.value);rerenderEntry('${id}')">${stratOpts}</select>
+        </div>
+        <div>
+          <div class="j-form-lbl">Risk ($)</div>
+          <input class="j-risk-input" type="number" value="${e.riskUSD||''}" placeholder="${defaultRisk()}"
+            onchange="updateMeta('${id}','risk',parseFloat(this.value)||${defaultRisk()});rerenderEntry('${id}')">
+        </div>
+        <div>
+          <div class="j-form-lbl">Rating</div>
+          <div class="rating-btns">
+            ${['A','B','C'].map(r=>`<button class="rating-btn${e.rating===r?' active-'+r:''}" onclick="updateMeta('${id}','rating','${e.rating===r?'':r}');rerenderEntry('${id}')">${r}</button>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:.75rem">
+        <div class="j-form-lbl">Notes</div>
+        <textarea class="j-notes" placeholder="Setup, entry reason, what went well, mistakes..."
+          onblur="updateMeta('${id}','notes',this.value)">${e.notes||''}</textarea>
+      </div>
+      <div class="j-screenshot-row" style="margin-top:.75rem">
+        <div class="j-form-lbl" style="margin:0">Screenshots</div>
+        <button class="j-screenshot-btn" onclick="document.getElementById('j-img-input-${id}').click()">
+          📎 Add image
+        </button>
+        <input type="file" accept="image/*" multiple class="j-screenshot-input"
+          id="j-img-input-${id}" onchange="addScreenshots('${id}',this)">
+      </div>
+      <div class="j-screenshot-preview" id="j-img-preview-${id}">
+        ${renderThumbs(id)}
+      </div>`;
+  }
+
+  function toggleEntry(id) {
+    const detail = document.getElementById('jd-'+id);
+    const entry  = document.getElementById('je-'+id);
+    if (!detail) return;
+    const isOpen = detail.style.display!=='none';
+    detail.style.display = isOpen?'none':'block';
+    entry.classList.toggle('expanded',!isOpen);
+    if (!isOpen) expandedIds.add(id); else expandedIds.delete(id);
+  }
+
+  function updateMeta(id, key, value) {
+    saveMeta(id,{[key]:value});
+    const e = JOURNAL.find(e=>e.id===id);
+    if (!e) return;
+    e[key] = value;
+    if (key==='risk') { e.riskUSD=value; e.pnlR=value>0?parseFloat((e.pnlUSD/value).toFixed(2)):0; }
+  }
+
+  // ── Screenshot helpers ──
+  function getScreenshots(id) {
+    try { return JSON.parse(localStorage.getItem('td_shots_'+id)||'[]'); } catch { return []; }
+  }
+  function saveScreenshots(id, arr) {
+    try { localStorage.setItem('td_shots_'+id, JSON.stringify(arr)); } catch(e) {
+      alert('Storage full — try removing some screenshots first.');
+    }
+  }
+  function renderThumbs(id) {
+    return getScreenshots(id).map((src,i)=>
+      `<div class="j-screenshot-thumb" onclick="showLightbox('${id}',${i})">
+        <img src="${src}" alt="screenshot ${i+1}">
+        <button class="j-screenshot-del" onclick="event.stopPropagation();deleteScreenshot('${id}',${i})" title="Remove">✕</button>
+      </div>`
+    ).join('');
+  }
+  function addScreenshots(id, input) {
+    const files = Array.from(input.files);
+    if (!files.length) return;
+    const existing = getScreenshots(id);
+    let loaded = 0;
+    files.forEach(f => {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        existing.push(ev.target.result);
+        loaded++;
+        if (loaded === files.length) {
+          saveScreenshots(id, existing);
+          const el = document.getElementById('j-img-preview-'+id);
+          if (el) el.innerHTML = renderThumbs(id);
+        }
+      };
+      reader.readAsDataURL(f);
+    });
+    input.value = '';
+  }
+  function deleteScreenshot(id, idx) {
+    const arr = getScreenshots(id);
+    arr.splice(idx, 1);
+    saveScreenshots(id, arr);
+    const el = document.getElementById('j-img-preview-'+id);
+    if (el) el.innerHTML = renderThumbs(id);
+  }
+  function showLightbox(id, idx) {
+    const arr = getScreenshots(id);
+    if (!arr[idx]) return;
+    const lb = document.createElement('div');
+    lb.className = 'j-lightbox';
+    lb.innerHTML = `<img src="${arr[idx]}" alt="screenshot">`;
+    lb.onclick = () => lb.remove();
+    document.body.appendChild(lb);
+  }
+
+  function rerenderEntry(id) {
+    const e  = JOURNAL.find(e=>e.id===id);
+    const el = document.getElementById('je-'+id);
+    if (!e||!el) return;
+    const wasExpanded = expandedIds.has(id);
+    el.outerHTML = renderEntry(e);
+    if (wasExpanded) {
+      const d = document.getElementById('jd-'+id);
+      const ne = document.getElementById('je-'+id);
+      if (d) { d.style.display='block'; ne?.classList.add('expanded'); }
+    }
+    renderStats(JOURNAL);
+    renderStratChart(JOURNAL);
+  }
+
+  // ── Manual entry modal ──
+  function openNewModal() {
+    const now = new Date();
+    const local = v => new Date(v.getTime()-v.getTimezoneOffset()*60000).toISOString().slice(0,16);
+    document.getElementById('mf-open-time').value  = local(now);
+    document.getElementById('mf-close-time').value = local(now);
+    document.getElementById('mf-risk').value = defaultRisk();
+    document.getElementById('mf-pair').innerHTML = `<option value="">Select...</option>`+
+      PAIRS.map(p=>`<option value="${p.symbol}">${p.symbol}</option>`).join('');
+    document.getElementById('mf-strat').innerHTML =
+      STRATEGIES.map(s=>`<option value="${s.code}">${s.name}</option>`).join('');
+    document.getElementById('j-overlay').classList.add('open');
+  }
+  function closeModal() { document.getElementById('j-overlay').classList.remove('open'); }
+
+  function saveManualTrade() {
+    const pair    = document.getElementById('mf-pair').value;
+    if (!pair) { alert('Select a pair'); return; }
+    const dir     = document.getElementById('mf-dir').value;
+    const strat   = document.getElementById('mf-strat').value;
+    const rating  = document.getElementById('mf-rating').value;
+    const openT   = document.getElementById('mf-open-time').value;
+    const closeT  = document.getElementById('mf-close-time').value;
+    const entry   = parseFloat(document.getElementById('mf-entry').value)||0;
+    const exitP   = parseFloat(document.getElementById('mf-exit').value)||0;
+    const pnlUSD  = parseFloat(document.getElementById('mf-pnl').value)||0;
+    const risk    = parseFloat(document.getElementById('mf-risk').value)||defaultRisk();
+    const notes   = document.getElementById('mf-notes').value.trim();
+
+    const id = generateId();
+    const trade = { id, datetime:openT, pair, direction:dir.toUpperCase(), entry, pnlUSD, risk, notes,
+      result: pnlUSD>0?'WIN':pnlUSD<0?'LOSS':'BE' };
+    const existing = loadFromStorage('trades')||[];
+    existing.unshift(trade);
+    saveToStorage('trades', existing);
+    saveMeta('m_'+id, {strategy:strat, rating, notes, risk});
+    closeModal();
+    loadJournal();
   }
 
   // ── Init ──
-  populatePairDropdowns();
-  setDefaultDatetime();
-  renderTable();
-  updateStats();
+  loadJournal();
+
+  // Poll open positions every 10s
+  setInterval(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/mt5/state`);
+      const j = await r.json();
+      let data = j?.data;
+      if (typeof data==='string'){try{data=JSON.parse(data);}catch{}}
+      if (!data?.positions) return;
+      const newPos = data.positions.map(posToEntry);
+      JOURNAL = JOURNAL.filter(e=>e.source!=='mt5_open');
+      JOURNAL = [...newPos,...JOURNAL];
+      renderStats(JOURNAL);
+      renderList(filtered());
+    } catch {}
+  }, 10000);
 </script>
 </body>
 </html>

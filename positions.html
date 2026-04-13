@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RB Trading | Positions</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<div id="nav-placeholder"></div>
+
+<div class="page">
+  <div class="page-header">
+    <div class="page-title">Positions & Analytics</div>
+    <div class="page-sub" id="live-updated">Connecting to MT5...</div>
+  </div>
+
+  <!-- Live MT5 Strip -->
+  <div class="live-strip" id="live-strip">
+    <div class="live-status-dot" id="live-dot"></div>
+    <div class="live-chip"><div class="live-chip-lbl">Balance</div><div class="live-chip-val gold" id="lc-balance">--</div></div>
+    <div class="live-chip"><div class="live-chip-lbl">Equity</div><div class="live-chip-val" id="lc-equity">--</div></div>
+    <div class="live-chip"><div class="live-chip-lbl">Floating P&L</div><div class="live-chip-val" id="lc-float">--</div></div>
+    <div class="live-chip"><div class="live-chip-lbl">Free Margin</div><div class="live-chip-val" id="lc-margin">--</div></div>
+    <div class="live-chip"><div class="live-chip-lbl">Open Trades</div><div class="live-chip-val" id="lc-trades">--</div></div>
+    <div class="live-chip"><div class="live-chip-lbl">Server</div><div class="live-chip-val" id="lc-server" style="font-size:0.72rem">--</div></div>
+  </div>
+
+  <!-- Period Toggle -->
+  <div class="period-toggle">
+    <button class="period-btn active" data-period="all">All</button>
+    <button class="period-btn" data-period="month">This Month</button>
+    <button class="period-btn" data-period="week">This Week</button>
+  </div>
+
+  <!-- Section A: PnL Cards -->
+  <div class="analytics-section">
+    <div class="analytics-title">Performance Overview</div>
+    <div class="pnl-cards" id="pnl-cards"></div>
+  </div>
+
+  <!-- Section B: Equity Curve -->
+  <div class="analytics-section">
+    <div class="analytics-title">
+      Equity Curve
+      <div class="chart-toggle-grp">
+        <button class="chart-tog" data-unit="R">R</button>
+        <button class="chart-tog active" data-unit="$">$</button>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="equity-chart"></canvas></div>
+  </div>
+
+  <!-- Recent Trades -->
+  <div class="analytics-section">
+    <div class="analytics-title">
+      Recent Closed Trades
+      <a href="journal.html" class="j-link-btn" style="font-size:.7rem">View Full Journal →</a>
+    </div>
+    <div id="recent-trades-wrap">
+      <div style="color:var(--text-3);font-size:.78rem;padding:.5rem 0">Loading...</div>
+    </div>
+  </div>
+
+  <!-- Section C: PnL Breakdown -->
+  <div class="analytics-section">
+    <div class="analytics-title">PnL Breakdown</div>
+    <div class="tab-strip">
+      <button class="tab-btn active" data-tab="pair">By Pair</button>
+      <button class="tab-btn" data-tab="session">By Session</button>
+      <button class="tab-btn" data-tab="dow">By Day</button>
+      <button class="tab-btn" data-tab="month">By Month</button>
+    </div>
+    <div id="tab-pair"    class="tab-panel active"><div class="bkdn-chart-wrap"><canvas id="chart-pair"></canvas></div><div class="bkdn-cards" id="bcards-pair"></div><div class="drill-section" id="drill-pair"></div></div>
+    <div id="tab-session" class="tab-panel"><div class="bkdn-chart-wrap"><canvas id="chart-session"></canvas></div><div class="bkdn-cards" id="bcards-session"></div><div class="drill-section" id="drill-session"></div></div>
+    <div id="tab-dow"     class="tab-panel"><div class="bkdn-chart-wrap"><canvas id="chart-dow"></canvas></div><div class="bkdn-cards" id="bcards-dow"></div><div class="drill-section" id="drill-dow"></div></div>
+    <div id="tab-month"   class="tab-panel"><div class="bkdn-chart-wrap"><canvas id="chart-month"></canvas></div><div class="bkdn-cards" id="bcards-month"></div><div class="drill-section" id="drill-month"></div></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script>
+  document.getElementById('nav-placeholder').innerHTML = getNavHTML('positions');
+  startClock();
+
+  // ── API Base ──
+  const API_BASE = location.protocol === 'file:'
+    ? 'https://trading-dashboard-rosy.vercel.app' : '';
+
+  // ── Symbol normaliser: "EURUSD" → "EUR/USD" ──
+  const SYM_MAP = {
+    EURUSD:'EUR/USD', GBPUSD:'GBP/USD', USDJPY:'USD/JPY', XAUUSD:'XAU/USD',
+    EURJPY:'EUR/JPY', GBPJPY:'GBP/JPY', AUDUSD:'AUD/USD', USDCAD:'USD/CAD',
+    USDCHF:'USD/CHF', NZDUSD:'NZD/USD', EURGBP:'EUR/GBP', EURAUD:'EUR/AUD',
+    GBPAUD:'GBP/AUD', AUDNZD:'AUD/NZD', XAGUSD:'XAG/USD',
+  };
+  function normSym(s) {
+    const upper = s.toUpperCase().replace(/[^A-Z0-9]/g,'');
+    return SYM_MAP[upper] || SYM_MAP[upper.slice(0,6)] || s;
+  }
+
+  // ── Session from Unix timestamp (seconds) ──
+  function sessionFromTime(unix) {
+    const h = new Date(unix * 1000).getUTCHours();
+    if (h >= 12 && h < 21) return 'newyork';
+    if (h >= 7  && h < 16) return 'london';
+    if (h >= 0  && h < 9)  return 'tokyo';
+    return 'off';
+  }
+
+  // ── Risk per trade (configurable, persisted) ──
+  let riskPerTrade = parseFloat(localStorage.getItem('td_risk') || '1000');
+
+  // ── Live MT5 balance (populated by pollMT5) ──
+  let liveBalance = null;
+
+  // ── Trade data loaded from MT5 ──
+  let TRADES = [];
+
+  // ── Map raw MT5 deal → internal trade object ──
+  function dealToTrade(d) {
+    const netUSD  = parseFloat((d.profit + d.swap + d.commission).toFixed(2));
+    const ts      = d.closeTime || d.time || 0;
+    const risk    = d.riskUSD || riskPerTrade;
+    const date    = new Date(ts * 1000).toISOString().slice(0, 10);
+    return {
+      id:        d.ticket,
+      symbol:    normSym(d.symbol),
+      dir:       d.dir,
+      session:   sessionFromTime(ts),
+      date,
+      month:     date.slice(0, 7),
+      dow:       new Date(date).getDay(),
+      pnlUSD:    netUSD,
+      pnlR:      risk > 0 ? parseFloat((netUSD / risk).toFixed(2)) : 0,
+      strategy:  d.comment || '',
+    };
+  }
+
+  // ── Fetch deals from API ──
+  async function fetchDeals() {
+    try {
+      const r    = await fetch(`${API_BASE}/api/mt5/deals`);
+      const json = await r.json();
+      if (!json.deals || !json.deals.length) return [];
+      return json.deals.map(dealToTrade);
+    } catch { return []; }
+  }
+
+  // ── State ──
+  let activePeriod = 'all';
+  let equityUnit   = '$';
+  let equityChart  = null;
+  let bkdnCharts   = {};
+  let activeTab    = 'pair';
+  let drillFilter  = null; // { tab, key } when a bar is clicked
+
+  // ── Date helpers ──
+  function getWeekBounds() {
+    const now = new Date();
+    const d   = new Date(now);
+    d.setHours(0,0,0,0);
+    d.setDate(d.getDate() - d.getDay() + 1); // Monday
+    const end = new Date(d); end.setDate(d.getDate() + 6);
+    return { start: d.toISOString().slice(0,10), end: end.toISOString().slice(0,10) };
+  }
+  function getMonthBounds() {
+    const now = new Date();
+    const s = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+    return { start: s, end: now.toISOString().slice(0,10) };
+  }
+
+  function filterTrades(trades) {
+    if (activePeriod === 'week') {
+      const { start, end } = getWeekBounds();
+      return trades.filter(t => t.date >= start && t.date <= end);
+    }
+    if (activePeriod === 'month') {
+      const { start, end } = getMonthBounds();
+      return trades.filter(t => t.date >= start && t.date <= end);
+    }
+    return trades;
+  }
+
+  // ── Chart.js global defaults ──
+  Chart.defaults.color = '#94a3b8';
+  Chart.defaults.borderColor = '#1e2a3a';
+  Chart.defaults.font.family = "'Space Mono', monospace";
+
+  const CJ_GRID = { color: '#1e2a3a' };
+  const CJ_TICK = { color: '#94a3b8', font: { size: 10 } };
+
+  function barColors(values) {
+    return values.map(v => v >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
+  }
+  function barBorders(values) {
+    return values.map(v => v >= 0 ? '#22c55e' : '#ef4444');
+  }
+
+  // ── Section A: PnL Cards ──
+  function renderPnlCards(trades) {
+    const wins     = trades.filter(t => t.pnlUSD > 0);
+    const losses   = trades.filter(t => t.pnlUSD < 0);
+    const totalUSD = trades.reduce((s,t) => s + t.pnlUSD, 0);
+    // Total P&L = current balance − starting balance (starting derived from live balance)
+    const startBal = (liveBalance ?? 0) - totalUSD;
+    const pnlPct   = startBal > 0 ? (totalUSD / startBal * 100).toFixed(2) : '0.00';
+    const wr       = trades.length ? (wins.length / trades.length * 100).toFixed(1) : 0;
+    const bestUSD  = trades.length ? Math.max(...trades.map(t => t.pnlUSD)) : 0;
+    const worstUSD = trades.length ? Math.min(...trades.map(t => t.pnlUSD)) : 0;
+    const avgWinUSD  = wins.length   ? wins.reduce((s,t)=>s+t.pnlUSD,0)/wins.length   : null;
+    const avgLossUSD = losses.length ? losses.reduce((s,t)=>s+t.pnlUSD,0)/losses.length : null;
+    const rrRatio  = avgWinUSD != null && avgLossUSD != null
+      ? (Math.abs(avgWinUSD / avgLossUSD)).toFixed(2) : '--';
+    const expVal   = avgWinUSD != null && avgLossUSD != null
+      ? ((parseFloat(wr)/100 * avgWinUSD) + (1 - parseFloat(wr)/100) * avgLossUSD).toFixed(2)
+      : '--';
+
+    const usd  = n => `${n>=0?'+$':'-$'}${Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    const sign = v => v > 0 ? '+' : '';
+    const tint = v => v > 0 ? 'tint-pos' : v < 0 ? 'tint-neg' : 'neutral';
+    const cls  = v => v > 0 ? 'pos' : v < 0 ? 'neg' : 'gold';
+
+    const cards = [
+      { lbl:'Total P&L',   val: usd(totalUSD), tint: tint(totalUSD), cls: cls(totalUSD), sub: `${sign(parseFloat(pnlPct))}${pnlPct}% · ${trades.length} trades` },
+      { lbl:'Starting Bal',val: startBal>0?`$${startBal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:'--', tint:'neutral', cls:'gold', sub:'derived from MT5' },
+      { lbl:'Win Rate',    val: `${wr}%`, tint: parseFloat(wr)>=50?'tint-pos':'tint-neg', cls: parseFloat(wr)>=50?'pos':'neg', sub: `${wins.length}W / ${losses.length}L` },
+      { lbl:'Trades',      val: trades.length, tint: 'neutral', cls: 'gold', sub: '' },
+      { lbl:'Best Trade',  val: usd(bestUSD),  tint: 'tint-pos', cls: 'pos', sub: '' },
+      { lbl:'Worst Trade', val: usd(worstUSD), tint: 'tint-neg', cls: 'neg', sub: '' },
+      { lbl:'Avg Win',     val: avgWinUSD!=null?usd(avgWinUSD):'--',  tint:'neutral', cls:'pos', sub:'' },
+      { lbl:'Avg Loss',    val: avgLossUSD!=null?usd(avgLossUSD):'--', tint:'neutral', cls:'neg', sub:'' },
+      { lbl:'R:R Ratio',   val: rrRatio==='--'?'--':`1:${rrRatio}`, tint:'neutral', cls:'gold', sub:'' },
+      { lbl:'Expectancy',  val: expVal==='--'?'--':usd(parseFloat(expVal)), tint: parseFloat(expVal)>=0?'tint-pos':'tint-neg', cls: parseFloat(expVal)>=0?'pos':'neg', sub:'per trade' },
+    ];
+
+    document.getElementById('pnl-cards').innerHTML = cards.map(c => `
+      <div class="pnl-card ${c.tint}">
+        <div class="pnl-card-lbl">${c.lbl}</div>
+        <div class="pnl-card-val ${c.cls}">${c.val}</div>
+        ${c.sub ? `<div class="pnl-card-sub">${c.sub}</div>` : ''}
+      </div>`).join('');
+  }
+
+  // ── Section B: Equity Curve ──
+  function renderEquityChart(trades) {
+    const sorted = [...trades].sort((a,b) => a.date.localeCompare(b.date));
+    const useR   = equityUnit === 'R';
+    const key    = useR ? 'pnlR' : 'pnlUSD';
+
+    // For $ mode: derive starting balance so curve shows absolute account value
+    const totalPnlUSD = sorted.reduce((s,t) => s + t.pnlUSD, 0);
+    const startBal = useR ? 0 : ((liveBalance ?? 0) - totalPnlUSD);
+
+    let cum = startBal, highWater = startBal;
+    const eq = [], hw = [], labels = [];
+
+    sorted.forEach(t => {
+      cum += t[key];
+      highWater = Math.max(highWater, cum);
+      eq.push(parseFloat(cum.toFixed(2)));
+      hw.push(parseFloat(highWater.toFixed(2)));
+      labels.push(t.date.slice(5)); // MM-DD
+    });
+    // Add start point
+    eq.unshift(startBal); hw.unshift(startBal); labels.unshift('Start');
+
+    const ctx = document.getElementById('equity-chart').getContext('2d');
+    if (equityChart) { equityChart.destroy(); equityChart = null; }
+
+    equityChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'High Water',
+            data: hw,
+            borderColor: 'transparent',
+            backgroundColor: 'transparent',
+            pointRadius: 0,
+            tension: 0.3,
+            fill: false,
+            order: 1,
+          },
+          {
+            label: equityUnit === 'R' ? 'Equity (R)' : 'Equity ($)',
+            data: eq,
+            borderColor: ctx2 => {
+              const i = ctx2.p0DataIndex;
+              return (i !== undefined && i < eq.length && eq[i] < hw[i])
+                ? 'rgba(239,68,68,0.9)' : 'rgba(240,180,41,0.9)';
+            },
+            segment: {
+              borderColor: ctx2 => {
+                const i = ctx2.p0DataIndex;
+                return i < eq.length && eq[i] < hw[i]
+                  ? 'rgba(239,68,68,0.9)' : 'rgba(240,180,41,0.9)';
+              },
+              backgroundColor: ctx2 => {
+                const i = ctx2.p0DataIndex;
+                return i < eq.length && eq[i] < hw[i]
+                  ? 'rgba(239,68,68,0.18)' : 'rgba(240,180,41,0.07)';
+              },
+            },
+            fill: { target: 0, above: 'rgba(240,180,41,0.07)', below: 'rgba(239,68,68,0.18)' },
+            pointRadius: 0,
+            borderWidth: 2,
+            tension: 0.3,
+            order: 2,
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx2 => {
+                if (ctx2.datasetIndex === 0) return null;
+                const v = ctx2.raw;
+                if (equityUnit === 'R') return `${v >= 0 ? '+' : ''}${v.toFixed(2)}R`;
+                return `$${v.toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2})}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { grid: CJ_GRID, ticks: { ...CJ_TICK, maxTicksLimit: 10, maxRotation: 0 } },
+          y: {
+            grid: CJ_GRID, ticks: { ...CJ_TICK,
+              callback: v => equityUnit === 'R' ? `${v}R` : `$${(v/1000).toFixed(0)}k`
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // ── Section C: Breakdown ──
+  function groupBy(trades, keyFn) {
+    const map = {};
+    trades.forEach(t => {
+      const k = keyFn(t);
+      if (!map[k]) map[k] = [];
+      map[k].push(t);
+    });
+    return map;
+  }
+
+  const DOW_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const SESSION_LABELS = { london: 'London', newyork: 'New York', tokyo: 'Tokyo' };
+
+  function renderBreakdownChart(canvasId, labels, values, onClickBar) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    if (bkdnCharts[canvasId]) { bkdnCharts[canvasId].destroy(); }
+    bkdnCharts[canvasId] = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          backgroundColor: barColors(values),
+          borderColor: barBorders(values),
+          borderWidth: 1,
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: {
+          callbacks: { label: ctx2 => `${ctx2.raw>=0?'+$':'-$'}${Math.abs(ctx2.raw).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}` }
+        }},
+        scales: {
+          x: { grid: CJ_GRID, ticks: CJ_TICK },
+          y: { grid: CJ_GRID, ticks: { ...CJ_TICK, callback: v => `${v>=0?'$':'-$'}${(Math.abs(v)/1000).toFixed(1)}k` } }
+        },
+        onClick: (evt, elements) => {
+          if (elements.length > 0) onClickBar(elements[0].index);
+        }
+      }
+    });
+  }
+
+  function renderBkdnCards(containerId, grouped, labels, keys) {
+    const rows = keys.map(k => {
+      const ts  = grouped[k] || [];
+      const tot = ts.reduce((s,t) => s + t.pnlUSD, 0);
+      const wr  = ts.length ? (ts.filter(t=>t.pnlUSD>0).length/ts.length*100).toFixed(0) : 0;
+      const totStr = `${tot>=0?'+$':'-$'}${Math.abs(tot).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+      return `<div class="bkdn-card">
+        <div class="bkdn-card-lbl">${labels[k] || k}</div>
+        <div class="bkdn-card-val ${tot>=0?'pos':'neg'}">${totStr}</div>
+        <div style="font-size:0.6rem;color:var(--text-3);margin-top:2px">${ts.length} trades · ${wr}%WR</div>
+      </div>`;
+    }).join('');
+    document.getElementById(containerId).innerHTML = rows;
+  }
+
+  function renderDrillTable(sectionId, trades, title) {
+    const el = document.getElementById(sectionId);
+    if (!trades || !trades.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `
+      <div class="drill-lbl">${title} — ${trades.length} trades</div>
+      <div class="drill-table-wrap">
+        <table>
+          <thead><tr>
+            <th>Date</th><th>Pair</th><th>Dir</th><th>Session</th><th>P&L ($)</th>
+          </tr></thead>
+          <tbody>${trades.sort((a,b)=>a.date.localeCompare(b.date)).map(t => `
+            <tr>
+              <td class="mono">${t.date}</td>
+              <td class="mono">${t.symbol}</td>
+              <td><span class="badge badge-${t.dir}">${t.dir.toUpperCase()}</span></td>
+              <td style="color:var(--text-2)">${SESSION_LABELS[t.session]||t.session}</td>
+              <td class="mono"><span style="color:${t.pnlUSD>=0?'var(--green)':'var(--red)'}">${t.pnlUSD>=0?'+$':'-$'}${Math.abs(t.pnlUSD).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderTab(tab, trades) {
+    drillFilter = null;
+    if (tab === 'pair') {
+      const grp  = groupBy(trades, t => t.symbol);
+      const keys = Object.keys(grp).sort();
+      const vals = keys.map(k => parseFloat(grp[k].reduce((s,t)=>s+t.pnlUSD,0).toFixed(2)));
+      const lblMap = {}; keys.forEach(k => lblMap[k] = k);
+      renderBreakdownChart('chart-pair', keys, vals, i => {
+        const k = keys[i]; drillFilter = { tab:'pair', key: k };
+        renderDrillTable('drill-pair', grp[k], k);
+      });
+      renderBkdnCards('bcards-pair', grp, lblMap, keys);
+      document.getElementById('drill-pair').innerHTML = '';
+    }
+    if (tab === 'session') {
+      const order = ['london','newyork','tokyo'];
+      const grp   = groupBy(trades, t => t.session);
+      const keys  = order.filter(k => grp[k]);
+      const vals  = keys.map(k => parseFloat(grp[k].reduce((s,t)=>s+t.pnlUSD,0).toFixed(2)));
+      const lblMap = {}; keys.forEach(k => lblMap[k] = SESSION_LABELS[k]||k);
+      renderBreakdownChart('chart-session', keys.map(k=>SESSION_LABELS[k]||k), vals, i => {
+        const k = keys[i]; drillFilter = { tab:'session', key: k };
+        renderDrillTable('drill-session', grp[k], SESSION_LABELS[k]||k);
+      });
+      renderBkdnCards('bcards-session', grp, lblMap, keys);
+      document.getElementById('drill-session').innerHTML = '';
+    }
+    if (tab === 'dow') {
+      const grp  = groupBy(trades, t => t.dow);
+      const keys = [1,2,3,4,5].filter(k => grp[k]);
+      const vals = keys.map(k => parseFloat(grp[k].reduce((s,t)=>s+t.pnlUSD,0).toFixed(2)));
+      const lblMap = {}; keys.forEach(k => lblMap[k] = DOW_LABELS[k]);
+      renderBreakdownChart('chart-dow', keys.map(k=>DOW_LABELS[k]), vals, i => {
+        const k = keys[i]; drillFilter = { tab:'dow', key: k };
+        renderDrillTable('drill-dow', grp[k], DOW_LABELS[k]);
+      });
+      renderBkdnCards('bcards-dow', grp, lblMap, keys);
+      document.getElementById('drill-dow').innerHTML = '';
+    }
+    if (tab === 'month') {
+      const grp  = groupBy(trades, t => t.month);
+      const keys = Object.keys(grp).sort();
+      const vals = keys.map(k => parseFloat(grp[k].reduce((s,t)=>s+t.pnlUSD,0).toFixed(2)));
+      const lblMap = {}; keys.forEach(k => { const [y,m]=k.split('-'); lblMap[k]=new Date(+y,+m-1,1).toLocaleString('en-GB',{month:'short',year:'2-digit'}); });
+      renderBreakdownChart('chart-month', keys.map(k=>lblMap[k]), vals, i => {
+        const k = keys[i]; drillFilter = { tab:'month', key: k };
+        renderDrillTable('drill-month', grp[k], lblMap[k]);
+      });
+      renderBkdnCards('bcards-month', grp, lblMap, keys);
+      document.getElementById('drill-month').innerHTML = '';
+    }
+  }
+
+  // ── Full render ──
+  function renderAll() {
+    const trades = filterTrades(TRADES);
+    if (!trades.length) {
+      document.getElementById('pnl-cards').innerHTML =
+        '<div style="color:var(--text-3);padding:2rem 0;grid-column:1/-1;text-align:center">No closed trades found — make sure the MT5 EA is running and has pushed at least one deal.</div>';
+      if (equityChart) { equityChart.destroy(); equityChart = null; }
+      return;
+    }
+    renderPnlCards(trades);
+    renderEquityChart(trades);
+    renderTab(activeTab, trades);
+  }
+
+  // ── Period toggle ──
+  document.querySelectorAll('.period-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activePeriod = btn.dataset.period;
+      renderAll();
+    });
+  });
+
+  // ── Equity unit toggle ──
+  document.querySelectorAll('.chart-tog').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.chart-tog').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      equityUnit = btn.dataset.unit;
+      renderEquityChart(filterTrades(TRADES));
+    });
+  });
+
+  // ── Tab strip ──
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      activeTab = btn.dataset.tab;
+      document.getElementById('tab-' + activeTab).classList.add('active');
+      renderTab(activeTab, filterTrades(TRADES));
+    });
+  });
+
+  // ── Live MT5 poll ──
+  let liveCountdown = 5;
+
+  async function pollMT5() {
+    try {
+      const r    = await fetch(`${API_BASE}/api/mt5/state`);
+      const json = await r.json();
+      let data   = json?.data;
+      if (typeof data === 'string') { try { data = JSON.parse(data); } catch {} }
+      if (!data?.account) return;
+
+      const acct    = data.account;
+      liveBalance   = parseFloat(acct.balance || 0);
+      const float   = parseFloat(acct.equity||0) - parseFloat(acct.balance||0);
+      const ageS    = (Date.now() - new Date(data.pushedAt).getTime()) / 1000;
+      const dot     = document.getElementById('live-dot');
+      dot.className = 'live-status-dot ' + (ageS < 20 ? 'live' : ageS < 60 ? 'stale' : '');
+
+      const t = new Date(data.pushedAt);
+      document.getElementById('live-updated').textContent =
+        `MT5 push: ${t.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;
+
+      const f = (n,d=2) => n==null?'--':parseFloat(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+      document.getElementById('lc-balance').textContent = '$'+f(acct.balance);
+      const eqEl = document.getElementById('lc-equity');
+      eqEl.textContent = '$'+f(acct.equity);
+      eqEl.className = 'live-chip-val '+(parseFloat(acct.equity)>parseFloat(acct.balance)?'pos':parseFloat(acct.equity)<parseFloat(acct.balance)?'neg':'gold');
+      const flEl = document.getElementById('lc-float');
+      flEl.textContent = (float>=0?'+$':'-$')+f(Math.abs(float));
+      flEl.className = 'live-chip-val '+(float>0?'pos':float<0?'neg':'gold');
+      document.getElementById('lc-margin').textContent  = '$'+f(acct.marginFree??acct.margin_free);
+      document.getElementById('lc-trades').textContent  = (data.positions||[]).length;
+      document.getElementById('lc-server').textContent  = acct.server||'--';
+    } catch(e) {}
+  }
+
+  setInterval(() => {
+    liveCountdown--;
+    if (liveCountdown <= 0) { pollMT5(); liveCountdown = 5; }
+  }, 1000);
+
+  // ── Init ──
+  pollMT5();
+  document.getElementById('pnl-cards').innerHTML =
+    '<div style="color:var(--text-3);padding:2rem 0;grid-column:1/-1;text-align:center">Loading trade history from MT5...</div>';
+  fetchDeals().then(deals => {
+    TRADES = deals;
+    renderAll();
+    renderRecentTrades(deals);
+  });
+
+  function renderRecentTrades(trades) {
+    const wrap = document.getElementById('recent-trades-wrap');
+    const recent = trades.slice(0, 10);
+    if (!recent.length) {
+      wrap.innerHTML = '<div style="color:var(--text-3);font-size:.78rem;padding:.5rem 0">No closed trades yet.</div>';
+      return;
+    }
+    const SYM_MAP = {EURUSD:'EUR/USD',GBPUSD:'GBP/USD',USDJPY:'USD/JPY',XAUUSD:'XAU/USD',EURJPY:'EUR/JPY',GBPJPY:'GBP/JPY'};
+    const STRAT_COLORS = {DSE:'#f0b429',BOT4H:'#06b6d4',Manual:'#94a3b8'};
+    wrap.innerHTML = `<div style="overflow-x:auto"><table class="recent-trades-table">
+      <thead><tr><th>Date</th><th>Pair</th><th>Dir</th><th>Strategy</th><th>P&L $</th><th>R</th><th></th></tr></thead>
+      <tbody>${recent.map(t => {
+        const sym = SYM_MAP[t.symbol?.replace('/','')]||t.symbol;
+        const strat = t.strategy||'Manual';
+        const sc = STRAT_COLORS[strat]||'#94a3b8';
+        const pnlColor = t.pnlUSD>=0?'var(--green)':'var(--red)';
+        const pnlStr = (t.pnlUSD>=0?'+$':'-$')+Math.abs(t.pnlUSD).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+        const rStr = `${t.pnlR>=0?'+':''}${t.pnlR.toFixed(2)}R`;
+        return `<tr>
+          <td class="mono" style="color:var(--text-2);font-size:.72rem">${t.date}</td>
+          <td class="mono" style="font-weight:700">${sym}</td>
+          <td><span class="badge badge-${t.dir}">${t.dir.toUpperCase()}</span></td>
+          <td><span class="strat-badge" style="background:${sc}22;color:${sc};border:1px solid ${sc}44">${strat}</span></td>
+          <td class="mono" style="color:${pnlColor};font-weight:700">${pnlStr}</td>
+          <td class="mono" style="color:${pnlColor}">${rStr}</td>
+          <td><a href="journal.html?ticket=${t.id}" class="j-link-btn">→</a></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+  }
+</script>
+</body>
+</html>
