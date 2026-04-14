@@ -248,12 +248,16 @@ async function storeInRedis(data) {
   const token = process.env.KV_REST_API_TOKEN;
   if (!url || !token) throw new Error('Redis env vars not set');
 
-  const r = await fetch(`${url}/set`, {
-    method:  'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body:    JSON.stringify(['macro:score', JSON.stringify(data), 'EX', 10800]),
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  // SET the value
+  const r = await fetch(`${url}/set/macro:score`, {
+    method: 'POST', headers, body: JSON.stringify(data),
   });
   if (!r.ok) throw new Error(`Redis write failed: ${await r.text()}`);
+
+  // EXPIRE in 3 hours (10800s)
+  await fetch(`${url}/expire/macro:score/10800`, { method: 'POST', headers });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
